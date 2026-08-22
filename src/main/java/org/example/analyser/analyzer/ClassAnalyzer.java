@@ -168,6 +168,25 @@ public class ClassAnalyzer {
     // REPOSITORY ENTITY TYPE
     // ==========================================
 
+    /*
+     * LIMITATION: we only detect the entity type when a
+     * repository directly extends one of the hardcoded
+     * Spring Data marker interfaces below.
+     *
+     * If the project uses its own base repository, e.g.:
+     *
+     *   interface BaseRepository<T, ID>
+     *           extends JpaRepository<T, ID> { }
+     *
+     *   interface OrderRepository
+     *           extends BaseRepository<OrderEntity, Long> { }
+     *
+     * then OrderRepository's "extends" type is BaseRepository,
+     * not JpaRepository, so this check misses it and
+     * repositoryEntityType stays unset for OrderRepository.
+     * We'd need to resolve BaseRepository transitively (or via
+     * Symbol Solver) to catch this - not done yet.
+     */
     private void extractRepositoryEntityType(
             ClassOrInterfaceType type,
             ClassInfo classInfo) {

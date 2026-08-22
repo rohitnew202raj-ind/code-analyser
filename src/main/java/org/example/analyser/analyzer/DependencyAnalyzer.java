@@ -83,6 +83,21 @@ public class DependencyAnalyzer {
         if ("REPOSITORY".equals(
                 targetClass.getType())) {
 
+            /*
+             * LIMITATION (temporary heuristic):
+             * We're treating any plain @Component that
+             * depends on a repository as "batch."
+             *
+             * @Component does not necessarily mean "batch" -
+             * it's just the closest signal we have right now,
+             * and it happened to hold for our test project.
+             *
+             * We'll replace this with a proper BatchAnalyzer
+             * that looks at @Scheduled, Spring Batch types
+             * (Job/Step/Tasklet/ItemReader/ItemWriter), etc.
+             * Batch programs matter as much as REST APIs for
+             * the actual migration scenario (5 batch programs).
+             */
             if ("COMPONENT".equals(
                     sourceClass.getType())) {
 
@@ -106,6 +121,25 @@ public class DependencyAnalyzer {
     // FIND APPLICATION CLASS
     // ==========================================
 
+    /*
+     * LIMITATION (deliberately accepted for now):
+     * We match classes by simple name only
+     * (target.getName().equals(className)).
+     *
+     * This works for our current application, but a real
+     * monolith can contain two classes with the same simple
+     * name in different packages, e.g.:
+     *
+     *   com.company.sales.CustomerService
+     *   com.company.reporting.CustomerService
+     *
+     * Simple-name matching becomes ambiguous in that case -
+     * we'd resolve a dependency to the wrong class.
+     *
+     * We'll fix this later with the JavaParser Symbol Solver
+     * (fully qualified type resolution). Do NOT add Symbol
+     * Solver yet - out of scope for now.
+     */
     private ClassInfo findClass(
             List<ClassInfo> classes,
             String className) {
