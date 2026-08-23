@@ -12,6 +12,14 @@ public class CrudOperationInfo {
     private String entityClass;
     private String tableName;
 
+    /*
+     * Carried over from the originating MethodCallInfo - see
+     * its javadoc field for what "inside a loop" does and
+     * doesn't detect. Defaults to false, set explicitly by
+     * CrudAnalyzer.
+     */
+    private boolean insideLoop;
+
     public CrudOperationInfo() {
     }
 
@@ -87,5 +95,13 @@ public class CrudOperationInfo {
 
     public void setTableName(String tableName) {
         this.tableName = tableName;
+    }
+
+    public boolean isInsideLoop() {
+        return insideLoop;
+    }
+
+    public void setInsideLoop(boolean insideLoop) {
+        this.insideLoop = insideLoop;
     }
 }

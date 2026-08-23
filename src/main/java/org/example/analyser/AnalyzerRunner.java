@@ -26,11 +26,13 @@ import org.example.analyser.analyzer.GodClassAnalyzer;
 import org.example.analyser.analyzer.InterfaceRoleResolver;
 import org.example.analyser.analyzer.MetaAnnotationResolver;
 import org.example.analyser.analyzer.MethodCallAnalyzer;
+import org.example.analyser.analyzer.NPlusOneQueryAnalyzer;
 import org.example.analyser.analyzer.PackageDomainExtractor;
 import org.example.analyser.analyzer.RepositoryBypassAnalyzer;
 import org.example.analyser.analyzer.RepositoryInheritanceResolver;
 import org.example.analyser.analyzer.ReportExporter;
 import org.example.analyser.analyzer.RuntimeDependencyAnalyzer;
+import org.example.analyser.analyzer.SharedEntityHotspotAnalyzer;
 import org.example.analyser.analyzer.SpringComponentAnalyzer;
 
 import org.example.analyser.model.ArchitectureFinding;
@@ -47,6 +49,7 @@ import org.example.analyser.model.EntityMutationInfo;
 import org.example.analyser.model.EntryPointInfo;
 import org.example.analyser.model.FlowPath;
 import org.example.analyser.model.MethodCallInfo;
+import org.example.analyser.model.PersistenceFinding;
 
 import org.example.analyser.parser.JavaSourceParser;
 import org.example.analyser.scanner.BuildConfigReader;
@@ -91,6 +94,8 @@ public class AnalyzerRunner implements CommandLineRunner {
     private final DeadComponentAnalyzer deadComponentAnalyzer;
     private final DomainCircularDependencyAnalyzer domainCircularDependencyAnalyzer;
     private final DomainBoundaryAnalyzer domainBoundaryAnalyzer;
+    private final NPlusOneQueryAnalyzer nPlusOneQueryAnalyzer;
+    private final SharedEntityHotspotAnalyzer sharedEntityHotspotAnalyzer;
     private final ReportExporter reportExporter;
 
     public AnalyzerRunner(
@@ -119,6 +124,8 @@ public class AnalyzerRunner implements CommandLineRunner {
             DeadComponentAnalyzer deadComponentAnalyzer,
             DomainCircularDependencyAnalyzer domainCircularDependencyAnalyzer,
             DomainBoundaryAnalyzer domainBoundaryAnalyzer,
+            NPlusOneQueryAnalyzer nPlusOneQueryAnalyzer,
+            SharedEntityHotspotAnalyzer sharedEntityHotspotAnalyzer,
             ReportExporter reportExporter) {
 
         this.projectScanner = projectScanner;
@@ -146,6 +153,8 @@ public class AnalyzerRunner implements CommandLineRunner {
         this.deadComponentAnalyzer = deadComponentAnalyzer;
         this.domainCircularDependencyAnalyzer = domainCircularDependencyAnalyzer;
         this.domainBoundaryAnalyzer = domainBoundaryAnalyzer;
+        this.nPlusOneQueryAnalyzer = nPlusOneQueryAnalyzer;
+        this.sharedEntityHotspotAnalyzer = sharedEntityHotspotAnalyzer;
         this.reportExporter = reportExporter;
     }
 
@@ -380,6 +389,26 @@ public class AnalyzerRunner implements CommandLineRunner {
                 crudAnalyzer.analyze(methodCalls, classes);
 
         // ======================================
+        // STEP 6a: PERSISTENCE INTELLIGENCE
+        //
+        // Both of these are structural queries over the CRUD
+        // data just computed above - no new parsing, same
+        // "document scope, don't guess" approach as the
+        // architecture/domain intelligence checks.
+        // ======================================
+
+        List<PersistenceFinding> persistenceFindings =
+                new ArrayList<>();
+
+        persistenceFindings.addAll(
+                nPlusOneQueryAnalyzer.analyze(crudOperations)
+        );
+
+        persistenceFindings.addAll(
+                sharedEntityHotspotAnalyzer.analyze(crudOperations)
+        );
+
+        // ======================================
         // STEP 6b: ENTRY POINT FLOWS
         //
         // For each entry point, walk the method-call graph
@@ -494,7 +523,8 @@ public class AnalyzerRunner implements CommandLineRunner {
                         flows,
                         architectureFindings,
                         domainCycles,
-                        domainBoundaries
+                        domainBoundaries,
+                        persistenceFindings
                 );
 
         try {
@@ -733,6 +763,9 @@ public class AnalyzerRunner implements CommandLineRunner {
                                 + " | " + operation.getOperation()
                                 + " | entity=" + operation.getEntityClass()
                                 + " | table=" + operation.getTableName()
+                                + (operation.isInsideLoop()
+                                        ? " | insideLoop=true"
+                                        : "")
                 )
         );
 
@@ -838,6 +871,29 @@ public class AnalyzerRunner implements CommandLineRunner {
         } else {
 
             architectureFindings.forEach(finding ->
+                    System.out.println(
+                            "[" + finding.getType() + "] "
+                                    + finding.getDescription()
+                    )
+            );
+        }
+
+        // ======================================
+        // PRINT: PERSISTENCE FINDINGS
+        // ======================================
+
+        System.out.println();
+        System.out.println("======================================");
+        System.out.println("       PERSISTENCE FINDINGS");
+        System.out.println("======================================");
+
+        if (persistenceFindings.isEmpty()) {
+
+            System.out.println("(none found)");
+
+        } else {
+
+            persistenceFindings.forEach(finding ->
                     System.out.println(
                             "[" + finding.getType() + "] "
                                     + finding.getDescription()

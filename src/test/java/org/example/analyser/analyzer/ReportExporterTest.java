@@ -12,6 +12,8 @@ import org.example.analyser.model.DomainCycle;
 import org.example.analyser.model.DomainDependency;
 import org.example.analyser.model.DomainInfo;
 import org.example.analyser.model.EntryPointInfo;
+import org.example.analyser.model.PersistenceFinding;
+import org.example.analyser.model.PersistenceFindingType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -91,7 +93,7 @@ class ReportExporterTest {
             ReportExporter.AnalysisReport report = new ReportExporter.AnalysisReport(
                     List.of(), List.of(), List.of(), List.of(), List.of(),
                     List.of(), List.of(), List.of(), List.of(), List.of(),
-                    List.of(finding), List.of(), List.of()
+                    List.of(finding), List.of(), List.of(), List.of()
             );
 
             reportExporter.export(
@@ -130,6 +132,22 @@ class ReportExporterTest {
         assertThat(html).contains("GOD_CLASS");
         assertThat(html).contains("OrderController.create");
         assertThat(html).contains("EXTRACTION_CANDIDATE");
+    }
+
+    @Test
+    void htmlReportListsPersistenceFindings(
+            @TempDir Path outputDirectory) throws Exception {
+
+        reportExporter.export(
+                outputDirectory, minimalReport(), minimalGraph()
+        );
+
+        String html = Files.readString(
+                outputDirectory.resolve("report.html")
+        );
+
+        assertThat(html).contains("N_PLUS_ONE_QUERY_RISK");
+        assertThat(html).contains("OrderService.processAll");
     }
 
     private DependencyGraph minimalGraph() {
@@ -174,6 +192,13 @@ class ReportExporterTest {
                 "order has no cross-domain dependencies"
         );
 
+        PersistenceFinding persistenceFinding = new PersistenceFinding(
+                PersistenceFindingType.N_PLUS_ONE_QUERY_RISK,
+                List.of("OrderService"),
+                "OrderService.processAll calls OrderRepository.findById "
+                        + "inside a loop - potential N+1 query pattern"
+        );
+
         return new ReportExporter.AnalysisReport(
                 List.of(),
                 List.of(),
@@ -187,7 +212,8 @@ class ReportExporterTest {
                 List.of(),
                 List.of(finding),
                 List.<DomainCycle>of(),
-                List.of(boundary)
+                List.of(boundary),
+                List.of(persistenceFinding)
         );
     }
 }
