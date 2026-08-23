@@ -399,6 +399,59 @@ actually *for*. Verified end-to-end against a hand-written sample
 covering all three verdicts (`EXTRACTION_CANDIDATE`, `TANGLED`,
 `BLOCKED_BY_CYCLE`) at once.
 
+## Export upgrade: Mermaid and HTML report
+
+`ReportExporter` now writes two additional formats alongside the
+existing `report.json` and Graphviz `.dot` files: Mermaid source
+(`dependency-graph.mmd`, `domain-graph.mmd`) and a single
+self-contained `report.html`.
+
+Mermaid was chosen over GraphML for the same reason DOT was kept
+rather than replaced: it needs no separate tool to view - GitHub,
+GitLab, and most modern Markdown renderers draw a
+` ```mermaid ` fence directly, and mermaid.live covers everything
+else. GraphML was considered and deliberately cut: it exists to
+feed dedicated graph-editing tools (Gephi, yEd) that this
+project's users are unlikely to already have open, whereas DOT
+and Mermaid both cover "render it now, wherever I already am."
+The Mermaid files are generated *from the same graph data* as the
+`.dot` files, not as a replacement for them - both are written on
+every run.
+
+Mermaid's own renderer does not scale indefinitely: at a few
+hundred nodes and edges a `flowchart` diagram becomes visually
+unreadable (and, in some renderers, slow to lay out) regardless
+of how correct the underlying data is. This tool does not
+simplify, cluster, or paginate the diagram to compensate - it
+emits one node per class and one edge per dependency, in full, the
+same way the `.dot` export always has. For a large target project,
+the domain-level Mermaid diagram (fewer nodes - one per domain,
+not per class) stays useful much longer than the full
+class-level dependency diagram does; `report.json` remains the
+only format with no size ceiling.
+
+`report.html` is a **summary/dashboard**, not a full data dump: it
+covers the same "so what should I look at first" material a
+reviewer would want on one scrollable page - stat cards,
+architecture findings, domain boundary verdicts, the domain
+overview, and the entry point inventory - all rendered from
+inline CSS with no external stylesheet, script, or CDN dependency,
+so the file opens correctly straight from disk with no server and
+no network access. It deliberately excludes the full class
+inventory, method-call graph, CRUD operations, and entity
+mutations: at real project scale that data is large, table-shaped,
+and better explored in `report.json` (or the DOT/Mermaid graphs)
+than reproduced as a second, slower copy in HTML. There is no
+separate PDF exporter - a browser's "Print > Save as PDF" on
+`report.html` covers that need without adding a PDF-rendering
+dependency to the project. All findings/domain-boundary/entry-point
+text is HTML-escaped before being written, since it is built from
+class and package names taken from the target project's own
+source. Verified end-to-end against a hand-written sample project
+exercising a class-level cycle, a domain-level cycle, a god class,
+two dead components, and a domain boundary in each of the three
+verdict states, with all six output files inspected directly.
+
 ## Parallelization scope
 
 Only the first pass (parsing + per-class structural analysis)
