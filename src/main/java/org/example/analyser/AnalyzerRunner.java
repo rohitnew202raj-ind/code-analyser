@@ -17,6 +17,8 @@ import org.example.analyser.analyzer.DeadComponentAnalyzer;
 import org.example.analyser.analyzer.DependencyAnalyzer;
 import org.example.analyser.analyzer.DependencyGraphBuilder;
 import org.example.analyser.analyzer.DomainAnalyzer;
+import org.example.analyser.analyzer.DomainBoundaryAnalyzer;
+import org.example.analyser.analyzer.DomainCircularDependencyAnalyzer;
 import org.example.analyser.analyzer.DomainDependencyAnalyzer;
 import org.example.analyser.analyzer.EntityMutationAnalyzer;
 import org.example.analyser.analyzer.FlowEngine;
@@ -37,6 +39,8 @@ import org.example.analyser.model.ClassInfo;
 import org.example.analyser.model.CrudOperationInfo;
 import org.example.analyser.model.DependencyGraph;
 import org.example.analyser.model.DependencyInfo;
+import org.example.analyser.model.DomainBoundaryInfo;
+import org.example.analyser.model.DomainCycle;
 import org.example.analyser.model.DomainDependency;
 import org.example.analyser.model.DomainInfo;
 import org.example.analyser.model.EntityMutationInfo;
@@ -85,6 +89,8 @@ public class AnalyzerRunner implements CommandLineRunner {
     private final GodClassAnalyzer godClassAnalyzer;
     private final RepositoryBypassAnalyzer repositoryBypassAnalyzer;
     private final DeadComponentAnalyzer deadComponentAnalyzer;
+    private final DomainCircularDependencyAnalyzer domainCircularDependencyAnalyzer;
+    private final DomainBoundaryAnalyzer domainBoundaryAnalyzer;
     private final ReportExporter reportExporter;
 
     public AnalyzerRunner(
@@ -111,6 +117,8 @@ public class AnalyzerRunner implements CommandLineRunner {
             GodClassAnalyzer godClassAnalyzer,
             RepositoryBypassAnalyzer repositoryBypassAnalyzer,
             DeadComponentAnalyzer deadComponentAnalyzer,
+            DomainCircularDependencyAnalyzer domainCircularDependencyAnalyzer,
+            DomainBoundaryAnalyzer domainBoundaryAnalyzer,
             ReportExporter reportExporter) {
 
         this.projectScanner = projectScanner;
@@ -136,6 +144,8 @@ public class AnalyzerRunner implements CommandLineRunner {
         this.godClassAnalyzer = godClassAnalyzer;
         this.repositoryBypassAnalyzer = repositoryBypassAnalyzer;
         this.deadComponentAnalyzer = deadComponentAnalyzer;
+        this.domainCircularDependencyAnalyzer = domainCircularDependencyAnalyzer;
+        this.domainBoundaryAnalyzer = domainBoundaryAnalyzer;
         this.reportExporter = reportExporter;
     }
 
@@ -448,6 +458,25 @@ public class AnalyzerRunner implements CommandLineRunner {
                 domainDependencyAnalyzer.analyze(domains, dependencies);
 
         // ======================================
+        // STEP 9b: DOMAIN INTELLIGENCE
+        //
+        // Cycle detection runs first because DomainBoundaryAnalyzer
+        // treats cycle membership as an automatic disqualifier,
+        // overriding whatever the raw coupling count would
+        // otherwise suggest.
+        // ======================================
+
+        List<DomainCycle> domainCycles =
+                domainCircularDependencyAnalyzer.analyze(
+                        domains, domainDependencies
+                );
+
+        List<DomainBoundaryInfo> domainBoundaries =
+                domainBoundaryAnalyzer.analyze(
+                        domains, domainDependencies, domainCycles
+                );
+
+        // ======================================
         // STEP 10: EXPORT (JSON + DOT)
         // ======================================
 
@@ -463,7 +492,9 @@ public class AnalyzerRunner implements CommandLineRunner {
                         crudOperations,
                         entityMutations,
                         flows,
-                        architectureFindings
+                        architectureFindings,
+                        domainCycles,
+                        domainBoundaries
                 );
 
         try {
@@ -615,6 +646,35 @@ public class AnalyzerRunner implements CommandLineRunner {
                                 + " -> " + dependency.getTargetDomain()
                                 + " [" + dependency.getType() + "]"
                                 + " count=" + dependency.getCount()
+                )
+        );
+
+        // ======================================
+        // PRINT: DOMAIN BOUNDARY ANALYSIS
+        // ======================================
+
+        System.out.println();
+        System.out.println("======================================");
+        System.out.println("      DOMAIN BOUNDARY ANALYSIS");
+        System.out.println("======================================");
+
+        if (!domainCycles.isEmpty()) {
+
+            System.out.println("CYCLES:");
+            domainCycles.forEach(cycle ->
+                    System.out.println("  " + cycle.getDescription())
+            );
+            System.out.println();
+        }
+
+        domainBoundaries.forEach(boundary ->
+                System.out.println(
+                        boundary.getDomainName()
+                                + " | " + boundary.getVerdict()
+                                + " | classes=" + boundary.getClassCount()
+                                + " | outgoing=" + boundary.getOutgoingDomainDependencies()
+                                + " | incoming=" + boundary.getIncomingDomainDependencies()
+                                + " | " + boundary.getReason()
                 )
         );
 
