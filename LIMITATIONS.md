@@ -283,6 +283,45 @@ lambda parameter, or a Lombok-generated setter called via a
 field/local/parameter receiver, both work; only the
 combination of "Lombok-only" and "lambda parameter" doesn't.
 
+## Flow Engine: what it connects and where it stops
+
+`FlowEngine` walks the method-call graph outward from each
+`EntryPointInfo` (an API, a scheduled/event trigger, a batch
+step, a startup runner) to assemble a `FlowPath`: every call
+hop, database operation, and entity mutation reachable from
+that entry point, not just the disconnected per-node facts the
+rest of the analyzer records. It's a breadth-first walk over
+the same simple-class-name-keyed data `MethodCallAnalyzer` and
+`CrudAnalyzer` already produce, so it inherits their resolution
+boundaries rather than introducing new ones.
+
+The one worth calling out explicitly: when a field is declared
+by interface type (`private OrderService orderService`, the
+standard Spring pattern) and a call into it resolves to the
+interface rather than the implementing class, the walk dead-ends
+at that node. The implementation's own outgoing calls are
+recorded under the implementation class's name
+(`OrderServiceImpl.create -> ...`), not the interface's
+(`OrderService.create`), so `FlowEngine` never finds them -
+there's no data connecting the two under this representation.
+A flow that looks short at the interface boundary is
+indistinguishable from a real short flow; both are represented
+identically (no further edges found) rather than guessed at.
+Closing this gap would mean giving the call graph itself
+interface-to-implementation awareness (the same kind of
+resolution `InterfaceRoleResolver` already does for
+classification, just for call edges instead of dependency
+edges) - a real, valuable follow-up, deliberately out of scope
+here.
+
+A separate, deliberate safety net: the walk caps out at 2000
+visited nodes per entry point (`FlowEngine.MAX_VISITED_NODES`).
+Real flows are a handful of hops; hitting this cap in practice
+would mean either a pathological fan-out or simple-name
+collisions merging unrelated call chains together. Either way,
+`FlowPath.isTruncated()` says so explicitly rather than
+silently returning a partial result that looks complete.
+
 ## Parallelization scope
 
 Only the first pass (parsing + per-class structural analysis)

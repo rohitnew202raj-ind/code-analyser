@@ -3,7 +3,7 @@ package org.example.analyser.analyzer;
 import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.TypeDeclaration;
-import org.example.analyser.model.BatchProgramInfo;
+import org.example.analyser.model.EntryPointInfo;
 import org.example.analyser.model.ClassInfo;
 import org.junit.jupiter.api.Test;
 
@@ -38,7 +38,7 @@ class BatchAnalyzerTest {
         classInfo.setName("NightlyReportRunner");
         classInfo.setPackageName("com.acme.reporting");
 
-        List<BatchProgramInfo> results =
+        List<EntryPointInfo> results =
                 batchAnalyzer.analyze(
                         declaration,
                         classInfo,
@@ -46,7 +46,7 @@ class BatchAnalyzerTest {
                 );
 
         assertThat(results)
-                .extracting(BatchProgramInfo::getTrigger)
+                .extracting(EntryPointInfo::getTriggerType)
                 .contains("MAIN_ENTRY_POINT");
     }
 
@@ -73,7 +73,7 @@ class BatchAnalyzerTest {
         classInfo.getRoles().add("APPLICATION");
         classInfo.setType("APPLICATION");
 
-        List<BatchProgramInfo> results =
+        List<EntryPointInfo> results =
                 batchAnalyzer.analyze(
                         declaration,
                         classInfo,
@@ -81,7 +81,7 @@ class BatchAnalyzerTest {
                 );
 
         assertThat(results)
-                .extracting(BatchProgramInfo::getTrigger)
+                .extracting(EntryPointInfo::getTriggerType)
                 .doesNotContain("MAIN_ENTRY_POINT");
     }
 
@@ -112,7 +112,7 @@ class BatchAnalyzerTest {
         classInfo.setPackageName("com.acme.seed");
         classInfo.getImplementedTypes().add("CommandLineRunner");
 
-        List<BatchProgramInfo> results =
+        List<EntryPointInfo> results =
                 batchAnalyzer.analyze(
                         declaration,
                         classInfo,
@@ -121,8 +121,8 @@ class BatchAnalyzerTest {
 
         assertThat(results)
                 .extracting(
-                        BatchProgramInfo::getTrigger,
-                        BatchProgramInfo::getMethodName
+                        EntryPointInfo::getTriggerType,
+                        EntryPointInfo::getMethodName
                 )
                 .containsExactly(tuple("STARTUP_RUNNER", "run"));
     }
@@ -154,7 +154,7 @@ class BatchAnalyzerTest {
         classInfo.setPackageName("com.acme.seed");
         classInfo.getImplementedTypes().add("ApplicationRunner");
 
-        List<BatchProgramInfo> results =
+        List<EntryPointInfo> results =
                 batchAnalyzer.analyze(
                         declaration,
                         classInfo,
@@ -162,7 +162,7 @@ class BatchAnalyzerTest {
                 );
 
         assertThat(results)
-                .extracting(BatchProgramInfo::getTrigger)
+                .extracting(EntryPointInfo::getTriggerType)
                 .containsExactly("STARTUP_RUNNER");
     }
 
@@ -187,7 +187,7 @@ class BatchAnalyzerTest {
         classInfo.setName("NotAnEntryPoint");
         classInfo.setPackageName("com.acme");
 
-        List<BatchProgramInfo> results =
+        List<EntryPointInfo> results =
                 batchAnalyzer.analyze(
                         declaration,
                         classInfo,
