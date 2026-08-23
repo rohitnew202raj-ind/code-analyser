@@ -49,6 +49,37 @@ addressed:
    now gives batch entry points a first-class inventory
    alongside REST APIs.
 
+## Also fixed after real-world testing
+
+Found by running the analyzer against a synthetic ~860-class
+monolith built to look like a real messy legacy codebase
+(interface-per-service, legacy V1/V2 service layers, custom
+base repositories, event listeners, a God facade, etc.):
+
+- **Service/repository dependency edges collapsed to `UNKNOWN`
+  whenever the field was declared by interface type** - which
+  is the standard Spring pattern (`OrderController` holds an
+  `OrderService` field, not `OrderServiceImpl`). Classification
+  only checked the *field's own* annotations, and interfaces
+  don't carry `@Service`/`@Repository` - only their
+  implementation does. On the test monolith, essentially every
+  controller/facade → service edge in the whole dependency
+  graph came back `UNKNOWN` because of this. `InterfaceRoleResolver`
+  now propagates `SERVICE`/`REPOSITORY` classification from an
+  implementing class down to the interface it implements, when
+  every implementor agrees on the same role (a genuine conflict
+  across multiple differently-classified implementors is left
+  unresolved rather than guessed).
+- **Plain `main()`-method batch entry points were invisible.**
+  `BatchAnalyzer` only looked for Spring annotations
+  (`@Scheduled` etc.) or Spring Batch interfaces - a
+  cron-invoked class with a bare `public static void
+  main(String[])` and no framework annotations at all (a very
+  common shape for a legacy batch JAR) matched none of those
+  signals. Now detected as a `MAIN_ENTRY_POINT` batch program,
+  excluding the Spring Boot application's own `main()` (already
+  captured separately as `APPLICATION`).
+
 ## Also fixed along the way
 
 - **`existsById` / other CRUD methods silently dropped.**

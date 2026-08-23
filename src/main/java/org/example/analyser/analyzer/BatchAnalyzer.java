@@ -24,6 +24,11 @@ import java.util.Set;
  *    @JmsListener annotated methods
  *  - classes implementing well-known Spring Batch interfaces
  *    (Tasklet, ItemReader, ItemWriter, ItemProcessor)
+ *  - a plain "public static void main(String[])" method - the
+ *    standard shape for a cron-invoked batch JAR that has no
+ *    Spring annotations of its own (confirmed missing on a
+ *    real synthetic monolith: a BatchRunnerMain/main() class
+ *    was invisible to every one of the signals above)
  *
  * LIMITATION (documented, not solved): Spring Batch jobs
  * assembled via Job/Step builders in a @Configuration class
@@ -85,6 +90,25 @@ public class BatchAnalyzer {
             );
         }
 
+        boolean isSpringBootApplicationEntryPoint =
+                classInfo.hasRole("APPLICATION");
+
+        clazz.getMethods()
+                .stream()
+                .filter(this::isMainMethod)
+                .filter(method -> !isSpringBootApplicationEntryPoint)
+                .forEach(method ->
+                        results.add(
+                                new BatchProgramInfo(
+                                        classInfo.getName(),
+                                        classInfo.getPackageName(),
+                                        method.getNameAsString(),
+                                        "MAIN_ENTRY_POINT",
+                                        domain
+                                )
+                        )
+                );
+
         for (MethodDeclaration method : clazz.getMethods()) {
 
             method.getAnnotations()
@@ -105,5 +129,13 @@ public class BatchAnalyzer {
         }
 
         return results;
+    }
+
+    private boolean isMainMethod(MethodDeclaration method) {
+
+        return method.getNameAsString().equals("main")
+                && method.isStatic()
+                && method.isPublic()
+                && method.getParameters().size() == 1;
     }
 }
