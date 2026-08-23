@@ -17,6 +17,7 @@ import org.example.analyser.analyzer.DependencyGraphBuilder;
 import org.example.analyser.analyzer.DomainAnalyzer;
 import org.example.analyser.analyzer.DomainDependencyAnalyzer;
 import org.example.analyser.analyzer.EntityMutationAnalyzer;
+import org.example.analyser.analyzer.InterfaceRoleResolver;
 import org.example.analyser.analyzer.MetaAnnotationResolver;
 import org.example.analyser.analyzer.MethodCallAnalyzer;
 import org.example.analyser.analyzer.PackageDomainExtractor;
@@ -61,6 +62,7 @@ public class AnalyzerRunner implements CommandLineRunner {
     private final ClassAnalyzer classAnalyzer;
     private final SpringComponentAnalyzer springComponentAnalyzer;
     private final RepositoryInheritanceResolver repositoryInheritanceResolver;
+    private final InterfaceRoleResolver interfaceRoleResolver;
     private final DependencyAnalyzer dependencyAnalyzer;
     private final RuntimeDependencyAnalyzer runtimeDependencyAnalyzer;
     private final DependencyGraphBuilder dependencyGraphBuilder;
@@ -81,6 +83,7 @@ public class AnalyzerRunner implements CommandLineRunner {
             ClassAnalyzer classAnalyzer,
             SpringComponentAnalyzer springComponentAnalyzer,
             RepositoryInheritanceResolver repositoryInheritanceResolver,
+            InterfaceRoleResolver interfaceRoleResolver,
             DependencyAnalyzer dependencyAnalyzer,
             RuntimeDependencyAnalyzer runtimeDependencyAnalyzer,
             DependencyGraphBuilder dependencyGraphBuilder,
@@ -100,6 +103,7 @@ public class AnalyzerRunner implements CommandLineRunner {
         this.classAnalyzer = classAnalyzer;
         this.springComponentAnalyzer = springComponentAnalyzer;
         this.repositoryInheritanceResolver = repositoryInheritanceResolver;
+        this.interfaceRoleResolver = interfaceRoleResolver;
         this.dependencyAnalyzer = dependencyAnalyzer;
         this.runtimeDependencyAnalyzer = runtimeDependencyAnalyzer;
         this.dependencyGraphBuilder = dependencyGraphBuilder;
@@ -233,6 +237,20 @@ public class AnalyzerRunner implements CommandLineRunner {
         // ======================================
 
         repositoryInheritanceResolver.resolve(classes);
+
+        // ======================================
+        // STEP 3b: PROPAGATE SERVICE/REPOSITORY ROLE
+        // FROM IMPLEMENTATION TO INTERFACE
+        //
+        // Most Spring code programs to an interface
+        // (OrderService, not OrderServiceImpl), and only
+        // the implementation carries the @Service/
+        // @Repository annotation. Without this, dependency
+        // classification of interface-typed fields - the
+        // normal case - falls back to UNKNOWN.
+        // ======================================
+
+        interfaceRoleResolver.resolve(classes);
 
         // ======================================
         // STEP 4: REST/GRAPHQL APIS + BATCH PROGRAMS
