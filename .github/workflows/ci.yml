@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # Runs the full unit test suite, including
+      # SyntheticMonolithIntegrationTest - which analyzes the
+      # committed synthetic-monolith fixture end to end and
+      # asserts on every finding type/domain-boundary
+      # verdict/behavior classification the analyzer produces.
+      # A regression that silently stops one of those checks
+      # from firing fails here instead of reaching main.
+      - name: Run tests
+        run: mvn --batch-mode --no-transfer-progress test
+
+      - name: Build jar
+        run: mvn --batch-mode --no-transfer-progress package -DskipTests
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports
+          if-no-files-found: ignore

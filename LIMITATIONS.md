@@ -558,6 +558,59 @@ repository call order with the right method names; the HTML
 report's Entry Points table showed the matching behavior badges,
 and the new "Mutating entry points" stat card counted exactly one.
 
+## Synthetic-monolith fixture and CI
+
+Every phase up to this one was verified by hand: build the jar,
+write a one-off throwaway Spring project in a scratch directory,
+run it, eyeball the console output, delete everything. That
+caught real bugs along the way - most notably the Phase 3
+`OrphanService` fixture bug described above, where a throwaway
+sample project accidentally gave a "should be dead" class an
+incoming edge and silently defeated the exact check it was meant
+to exercise. None of that manual verification runs again on the
+next change, though: a regression that quietly stopped
+`DeadComponentAnalyzer` (or any other analyzer) from firing would
+go unnoticed until someone happened to look.
+
+`src/test/resources/fixtures/synthetic-monolith` is a small,
+committed, versioned Spring project (four packages/domains:
+`order`, `payment`, `inventory`, `common`) deliberately built to
+trip every finding type, domain-boundary verdict, and behavior
+classification this tool produces: a class-level circular
+dependency, a domain-level circular dependency, a god class, a
+repository-bypass, four dead components (including a
+deliberately-unreferenced `OrphanService`, the exact shape of the
+Phase 3 bug), an N+1 query, a shared-entity hotspot, all three
+domain-boundary verdicts (`EXTRACTION_CANDIDATE`/`TANGLED`/
+`BLOCKED_BY_CYCLE`), and both `READ_ONLY`/`MUTATING` entry point
+classifications across REST and `@Scheduled` trigger types.
+
+`SyntheticMonolithIntegrationTest` runs the real `AnalyzerRunner`
+bean against this fixture and asserts on `report.json` - not
+exact counts or exact wording (that would make the test as
+fragile as pinning every analyzer's message text a second place),
+but *presence* of each category above. The goal is "did this
+whole category of detection stop firing," which is exactly the
+class of regression the Phase 3 bug represents and exactly what
+manual scratchpad verification never protected against, since it
+never reran.
+
+This is wired into `mvn test`, and therefore into the new
+`.github/workflows/ci.yml` GitHub Actions workflow, which now runs
+the full test suite and a jar build on every push and pull request
+against `main`. Nothing before this phase enforced that a broken
+`mvn test` (or a broken build) couldn't merge; this is the first
+automated gate in the repository's history.
+
+**Scope, explicitly**: this one fixture cannot cover everything -
+it has no Gradle module, no WebFlux functional routing, no Spring
+Batch job builders, and doesn't exercise every threshold's exact
+boundary value. It is a regression net for "did an existing,
+working check stop working," not a substitute for the phase-by-
+phase hand verification (building the jar, running it against a
+purpose-built sample, reading the actual output) that still
+happens for whatever a *new* phase adds.
+
 ## Parallelization scope
 
 Only the first pass (parsing + per-class structural analysis)
