@@ -157,6 +157,14 @@ base repositories, event listeners, a God facade, etc.):
   `@SubscriptionMapping`, `@SchemaMapping` are now recognized
   (annotation-based, so tractable the same way REST mappings
   are).
+- **`CommandLineRunner`/`ApplicationRunner` startup entry points
+  were invisible.** `BatchAnalyzer` only recognized
+  `@Scheduled`/event-listener annotations, Spring Batch
+  interfaces, and bare `main()` methods - a `@Component
+  implements CommandLineRunner` class (a common shape for a
+  one-off data-seeding or migration step that runs once at
+  application startup) matched none of those signals. Now
+  detected as a `STARTUP_RUNNER` batch program.
 - **`target/`, `build/`, `.git/`, IDE folders scanned as source.**
   `ProjectScanner` now excludes them.
 - **One bad file aborted the whole run.** Parsing is now

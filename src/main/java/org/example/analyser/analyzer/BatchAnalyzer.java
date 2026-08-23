@@ -24,6 +24,10 @@ import java.util.Set;
  *    @JmsListener annotated methods
  *  - classes implementing well-known Spring Batch interfaces
  *    (Tasklet, ItemReader, ItemWriter, ItemProcessor)
+ *  - classes implementing CommandLineRunner/ApplicationRunner -
+ *    Spring's own hook for "run this once at startup," a
+ *    common shape for a one-off data-seeding or migration
+ *    class that carries no other batch/scheduling signal
  *  - a plain "public static void main(String[])" method - the
  *    standard shape for a cron-invoked batch JAR that has no
  *    Spring annotations of its own (confirmed missing on a
@@ -59,6 +63,12 @@ public class BatchAnalyzer {
                     "ItemProcessor"
             );
 
+    private static final Set<String> STARTUP_RUNNER_INTERFACES =
+            Set.of(
+                    "CommandLineRunner",
+                    "ApplicationRunner"
+            );
+
     public List<BatchProgramInfo> analyze(
             TypeDeclaration<?> clazz,
             ClassInfo classInfo,
@@ -85,6 +95,24 @@ public class BatchAnalyzer {
                             classInfo.getPackageName(),
                             "execute",
                             "SPRING_BATCH_STEP_COMPONENT",
+                            domain
+                    )
+            );
+        }
+
+        boolean isStartupRunner =
+                classInfo.getImplementedTypes()
+                        .stream()
+                        .anyMatch(STARTUP_RUNNER_INTERFACES::contains);
+
+        if (isStartupRunner) {
+
+            results.add(
+                    new BatchProgramInfo(
+                            classInfo.getName(),
+                            classInfo.getPackageName(),
+                            "run",
+                            "STARTUP_RUNNER",
                             domain
                     )
             );
