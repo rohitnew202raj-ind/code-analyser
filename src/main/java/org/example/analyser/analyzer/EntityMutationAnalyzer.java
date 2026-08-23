@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 @Component
 public class EntityMutationAnalyzer {
@@ -48,52 +49,72 @@ public class EntityMutationAnalyzer {
                     }
 
                     // ==================================
-                    // FIND TARGET VARIABLE
+                    // RESOLVE THE MUTATED TYPE
                     // ==================================
-
-                    String variableName =
-                            extractScopeVariable(call);
-
-                    if (variableName == null) {
-                        return;
-                    }
-
-                    // ==================================
-                    // RESOLVE VARIABLE TYPE
-                    // ==================================
-
-                    String variableType =
-                            typeResolver.resolveVariableType(
-                                    variableName,
-                                    method,
-                                    sourceClass,
-                                    classes
-                            );
 
                     /*
-                     * Example:
+                     * Preferred: ask the Symbol Solver which
+                     * class declares the resolved setter
+                     * method directly. Unlike the scope/
+                     * variable-name heuristics below, this
+                     * also works when the receiver is a
+                     * lambda parameter, e.g.:
                      *
-                     * order -> OrderEntity
+                     * orders.forEach(o -> o.setStatus(x))
                      *
-                     * customer -> Customer
+                     * where "o" has no local/param/field
+                     * declaration to look up at all.
                      */
+                    Optional<String> declaringType =
+                            typeResolver.resolveDeclaringType(
+                                    call
+                            );
+
+                    String variableType =
+                            declaringType.orElse(null);
+
                     if (variableType == null) {
 
+                        String variableName =
+                                extractScopeVariable(call);
+
+                        if (variableName == null) {
+                            return;
+                        }
+
                         /*
-                         * The variable may be a repository
-                         * result represented by:
+                         * Example:
                          *
-                         * var order = repository.findById(...)
+                         * order -> OrderEntity
                          *
-                         * Try repository/entity resolution.
+                         * customer -> Customer
                          */
                         variableType =
-                                resolveRepositoryResultType(
+                                typeResolver.resolveVariableType(
                                         variableName,
                                         method,
                                         sourceClass,
                                         classes
                                 );
+
+                        if (variableType == null) {
+
+                            /*
+                             * The variable may be a repository
+                             * result represented by:
+                             *
+                             * var order = repository.findById(...)
+                             *
+                             * Try repository/entity resolution.
+                             */
+                            variableType =
+                                    resolveRepositoryResultType(
+                                            variableName,
+                                            method,
+                                            sourceClass,
+                                            classes
+                                    );
+                        }
                     }
 
                     if (variableType == null) {
@@ -404,7 +425,7 @@ public class EntityMutationAnalyzer {
          * -> order_entity
          */
 
-        return toSnakeCase(
+        return SnakeCaseConverter.toSnakeCase(
                 entity.getName()
         );
     }
@@ -445,40 +466,4 @@ public class EntityMutationAnalyzer {
         );
     }
 
-    // =========================================================
-    // SNAKE CASE
-    // =========================================================
-
-    private String toSnakeCase(
-            String value) {
-
-        if (value == null
-                || value.isEmpty()) {
-
-            return value;
-        }
-
-        StringBuilder result =
-                new StringBuilder();
-
-        for (int i = 0;
-             i < value.length();
-             i++) {
-
-            char current =
-                    value.charAt(i);
-
-            if (Character.isUpperCase(current)
-                    && i > 0) {
-
-                result.append('_');
-            }
-
-            result.append(
-                    Character.toLowerCase(current)
-            );
-        }
-
-        return result.toString();
-    }
 }

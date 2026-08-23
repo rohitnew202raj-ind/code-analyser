@@ -8,7 +8,7 @@ import org.example.analyser.model.DomainInfo;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -22,15 +22,24 @@ public class DomainDependencyAnalyzer {
         List<DomainDependency> result =
                 new ArrayList<>();
 
-        Map<String, DomainInfo> domainMap =
-                new LinkedHashMap<>();
+        // Class name -> domain name, built once instead of
+        // scanning every domain's class list per dependency.
+        Map<String, String> domainByClassName =
+                new HashMap<>();
 
         for (DomainInfo domain : domains) {
-            domainMap.put(
-                    domain.getName(),
-                    domain
-            );
+
+            for (ClassInfo classInfo : domain.getClasses()) {
+
+                domainByClassName.put(
+                        classInfo.getName(),
+                        domain.getName()
+                );
+            }
         }
+
+        Map<String, DomainDependency> byKey =
+                new HashMap<>();
 
         for (DependencyInfo dependency : dependencies) {
 
@@ -43,14 +52,12 @@ public class DomainDependencyAnalyzer {
             }
 
             String sourceDomain =
-                    findDomain(
-                            domainMap,
+                    domainByClassName.get(
                             dependency.getSourceClass()
                     );
 
             String targetDomain =
-                    findDomain(
-                            domainMap,
+                    domainByClassName.get(
                             dependency.getTargetClass()
                     );
 
@@ -65,18 +72,15 @@ public class DomainDependencyAnalyzer {
                 continue;
             }
 
+            String key =
+                    sourceDomain
+                            + "->"
+                            + targetDomain
+                            + ":"
+                            + dependency.getType();
+
             DomainDependency existing =
-                    result.stream()
-                            .filter(d ->
-                                    d.getSourceDomain()
-                                            .equals(sourceDomain)
-                                            && d.getTargetDomain()
-                                            .equals(targetDomain)
-                                            && d.getType()
-                                            == dependency.getType()
-                            )
-                            .findFirst()
-                            .orElse(null);
+                    byKey.get(key);
 
             if (existing != null) {
 
@@ -84,39 +88,18 @@ public class DomainDependencyAnalyzer {
 
             } else {
 
-                result.add(
+                DomainDependency created =
                         new DomainDependency(
                                 sourceDomain,
                                 targetDomain,
                                 dependency.getType()
-                        )
-                );
+                        );
+
+                byKey.put(key, created);
+                result.add(created);
             }
         }
 
         return result;
-    }
-
-    private String findDomain(
-            Map<String, DomainInfo> domainMap,
-            String className) {
-
-        for (DomainInfo domain :
-                domainMap.values()) {
-
-            boolean found =
-                    domain.getClasses()
-                            .stream()
-                            .anyMatch(classInfo ->
-                                    classInfo.getName()
-                                            .equals(className)
-                            );
-
-            if (found) {
-                return domain.getName();
-            }
-        }
-
-        return null;
     }
 }

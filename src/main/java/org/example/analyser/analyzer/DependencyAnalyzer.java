@@ -14,6 +14,9 @@ public class DependencyAnalyzer {
     public List<DependencyInfo> analyze(
             List<ClassInfo> classes) {
 
+        ClassRegistry registry =
+                new ClassRegistry(classes);
+
         List<DependencyInfo> applicationDependencies =
                 new ArrayList<>();
 
@@ -27,9 +30,8 @@ public class DependencyAnalyzer {
                 if (dependency.getType()
                         == DependencyType.ENTITY_RELATIONSHIP) {
 
-                    if (isApplicationClass(
-                            classes,
-                            dependency.getTargetClass())) {
+                    if (registry.findBySimpleName(
+                            dependency.getTargetClass()) != null) {
 
                         applicationDependencies.add(
                                 dependency
@@ -43,10 +45,7 @@ public class DependencyAnalyzer {
                         dependency.getTargetClass();
 
                 ClassInfo targetClass =
-                        findClass(
-                                classes,
-                                targetType
-                        );
+                        registry.findBySimpleName(targetType);
 
                 if (targetClass == null) {
                     continue;
@@ -54,7 +53,6 @@ public class DependencyAnalyzer {
 
                 DependencyType dependencyType =
                         classifyDependency(
-                                sourceClass,
                                 targetClass
                         );
 
@@ -76,18 +74,18 @@ public class DependencyAnalyzer {
     // ==========================================
 
     private DependencyType classifyDependency(
-            ClassInfo sourceClass,
             ClassInfo targetClass) {
 
         // Repository dependency
+        //
+        // Previously, a plain @Component depending on a
+        // repository was guessed to be "batch" here. That
+        // heuristic is gone now that BatchAnalyzer detects
+        // actual batch/scheduling signals (@Scheduled,
+        // Spring Batch interfaces, etc.) instead of guessing
+        // from a component's declared type.
         if ("REPOSITORY".equals(
                 targetClass.getType())) {
-
-            if ("COMPONENT".equals(
-                    sourceClass.getType())) {
-
-                return DependencyType.BATCH_DEPENDENCY;
-            }
 
             return DependencyType.REPOSITORY_DEPENDENCY;
         }
@@ -100,31 +98,5 @@ public class DependencyAnalyzer {
         }
 
         return DependencyType.UNKNOWN;
-    }
-
-    // ==========================================
-    // FIND APPLICATION CLASS
-    // ==========================================
-
-    private ClassInfo findClass(
-            List<ClassInfo> classes,
-            String className) {
-
-        return classes.stream()
-                .filter(clazz ->
-                        clazz.getName()
-                                .equals(className))
-                .findFirst()
-                .orElse(null);
-    }
-
-    private boolean isApplicationClass(
-            List<ClassInfo> classes,
-            String className) {
-
-        return findClass(
-                classes,
-                className
-        ) != null;
     }
 }

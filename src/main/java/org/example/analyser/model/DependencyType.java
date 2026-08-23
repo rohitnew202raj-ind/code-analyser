@@ -8,7 +8,17 @@ public enum DependencyType {
 
     ENTITY_RELATIONSHIP,
 
-    BATCH_DEPENDENCY,
+    /**
+     * Dependency obtained via ApplicationContext.getBean(...)
+     * instead of field injection.
+     */
+    RUNTIME_LOOKUP_DEPENDENCY,
+
+    /**
+     * Dependency obtained via direct instantiation
+     * (new SomeApplicationClass()) instead of DI.
+     */
+    DIRECT_INSTANTIATION_DEPENDENCY,
 
     UNKNOWN
 }
