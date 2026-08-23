@@ -85,6 +85,23 @@ class CrudAnalyzerTest {
                 .isEqualTo("OrderEntity");
     }
 
+    @Test
+    void propagatesInsideLoopFromTheOriginatingMethodCall() {
+
+        ClassInfo repository = repository("OrderRepository", "OrderEntity");
+
+        MethodCallInfo call = new MethodCallInfo(
+                "OrderService", "processAll", "OrderRepository", "findById"
+        );
+        call.setInsideLoop(true);
+
+        List<CrudOperationInfo> operations =
+                crudAnalyzer.analyze(List.of(call), List.of(repository));
+
+        assertThat(operations).hasSize(1);
+        assertThat(operations.get(0).isInsideLoop()).isTrue();
+    }
+
     private ClassInfo repository(String name, String entityType) {
 
         ClassInfo repository = new ClassInfo();

@@ -1,9 +1,14 @@
 package org.example.analyser.analyzer;
 
+import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
+import com.github.javaparser.ast.stmt.DoStmt;
+import com.github.javaparser.ast.stmt.ForEachStmt;
+import com.github.javaparser.ast.stmt.ForStmt;
+import com.github.javaparser.ast.stmt.WhileStmt;
 import org.example.analyser.model.ClassInfo;
 import org.example.analyser.model.MethodCallInfo;
 import org.springframework.stereotype.Component;
@@ -47,17 +52,61 @@ public class MethodCallAnalyzer {
                         return;
                     }
 
-                    calls.add(
+                    MethodCallInfo methodCallInfo =
                             new MethodCallInfo(
                                     sourceClass.getName(),
                                     method.getNameAsString(),
                                     targetClass,
                                     methodName
-                            )
+                            );
+
+                    methodCallInfo.setInsideLoop(
+                            isInsideLoop(call, method)
                     );
+
+                    calls.add(methodCallInfo);
                 });
 
         return calls;
+    }
+
+    /**
+     * Whether {@code call} is textually nested inside a Java
+     * loop construct (for/while/do-while/for-each) somewhere
+     * between it and its enclosing method.
+     *
+     * LIMITATION (documented, not a bug): this only recognizes
+     * actual loop statements. Iteration expressed as a
+     * {@code Stream}/{@code Collection} call chain - e.g.
+     * {@code orders.forEach(o -> repo.save(o))} - is not
+     * detected, since that's a method call, not a loop
+     * statement, and distinguishing "this lambda argument is an
+     * iteration callback" from any other lambda argument
+     * reliably would need real type resolution of the receiver.
+     * A hand-written {@code for}/{@code while} loop around a
+     * repository call - the common source of N+1 query bugs in
+     * practice - is still caught correctly.
+     */
+    private boolean isInsideLoop(
+            MethodCallExpr call,
+            MethodDeclaration method) {
+
+        Node current = call.getParentNode().orElse(null);
+
+        while (current != null && current != method) {
+
+            if (current instanceof ForStmt
+                    || current instanceof ForEachStmt
+                    || current instanceof WhileStmt
+                    || current instanceof DoStmt) {
+
+                return true;
+            }
+
+            current = current.getParentNode().orElse(null);
+        }
+
+        return false;
     }
 
     private String resolveTargetClass(

@@ -17,6 +17,7 @@ import org.example.analyser.model.EntityMutationInfo;
 import org.example.analyser.model.EntryPointInfo;
 import org.example.analyser.model.FlowPath;
 import org.example.analyser.model.MethodCallInfo;
+import org.example.analyser.model.PersistenceFinding;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -48,7 +49,8 @@ import java.util.List;
  * third graph format only a couple of specialist tools consume.
  *
  * The HTML report is a summary, not a full data dump: it covers
- * findings, domain boundaries, and the entry-point inventory -
+ * architecture and persistence findings, domain boundaries, and
+ * the entry-point inventory -
  * the sections short enough to be genuinely more readable as an
  * HTML table than as {@code report.json}. The full class
  * inventory, method-call graph, CRUD, and entity-mutation data
@@ -79,7 +81,8 @@ public class ReportExporter {
             List<FlowPath> flows,
             List<ArchitectureFinding> architectureFindings,
             List<DomainCycle> domainCycles,
-            List<DomainBoundaryInfo> domainBoundaries) {
+            List<DomainBoundaryInfo> domainBoundaries,
+            List<PersistenceFinding> persistenceFindings) {
     }
 
     public void export(
@@ -365,6 +368,7 @@ public class ReportExporter {
 
         appendSummarySection(html, report);
         appendArchitectureFindingsSection(html, report.architectureFindings());
+        appendPersistenceFindingsSection(html, report.persistenceFindings());
         appendDomainBoundarySection(html, report.domainCycles(), report.domainBoundaries());
         appendDomainOverviewSection(html, report.domains());
         appendEntryPointSection(html, report.entryPoints());
@@ -406,6 +410,10 @@ public class ReportExporter {
                 circularDependencyClassFindings
         );
         appendStatCard(html, "Domain-level cycles", report.domainCycles().size());
+        appendStatCard(
+                html, "Persistence findings",
+                report.persistenceFindings().size()
+        );
         html.append("</div>\n");
     }
 
@@ -432,6 +440,33 @@ public class ReportExporter {
         html.append("<table>\n<tr><th>Type</th><th>Description</th></tr>\n");
 
         for (ArchitectureFinding finding : findings) {
+
+            html.append("<tr><td><span class=\"badge badge-")
+                    .append(finding.getType().name().toLowerCase().replace('_', '-'))
+                    .append("\">")
+                    .append(htmlEscape(finding.getType().name()))
+                    .append("</span></td><td>")
+                    .append(htmlEscape(finding.getDescription()))
+                    .append("</td></tr>\n");
+        }
+
+        html.append("</table>\n");
+    }
+
+    private void appendPersistenceFindingsSection(
+            StringBuilder html,
+            List<PersistenceFinding> findings) {
+
+        html.append("<h2>Persistence Findings</h2>\n");
+
+        if (findings.isEmpty()) {
+            html.append("<p class=\"empty\">None found.</p>\n");
+            return;
+        }
+
+        html.append("<table>\n<tr><th>Type</th><th>Description</th></tr>\n");
+
+        for (PersistenceFinding finding : findings) {
 
             html.append("<tr><td><span class=\"badge badge-")
                     .append(finding.getType().name().toLowerCase().replace('_', '-'))
@@ -599,6 +634,8 @@ public class ReportExporter {
                 .badge-extraction-candidate { background: #c8e6c9; color: #1b5e20; }
                 .badge-tangled { background: #ffcdd2; color: #7f0000; }
                 .badge-blocked-by-cycle { background: #ffe0b2; color: #7a3c00; }
+                .badge-n-plus-one-query-risk { background: #ffcdd2; color: #7f0000; }
+                .badge-shared-entity-hotspot { background: #ffe0b2; color: #7a3c00; }
                 """;
     }
 }

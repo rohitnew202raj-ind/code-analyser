@@ -452,6 +452,58 @@ exercising a class-level cycle, a domain-level cycle, a god class,
 two dead components, and a domain boundary in each of the three
 verdict states, with all six output files inspected directly.
 
+## Persistence Deep Analysis: N+1 queries and shared entity hotspots
+
+`NPlusOneQueryAnalyzer` and `SharedEntityHotspotAnalyzer` are both
+structural queries over the CRUD data `CrudAnalyzer` already
+computes - no new parsing pass, same approach as the
+architecture/domain intelligence checks.
+
+**N+1 query risk** flags a repository READ call made from inside
+a loop - the classic SELECT N+1 shape (one query per loop
+iteration instead of one batched query). Detecting "inside a
+loop" required one small new capability: `MethodCallAnalyzer` now
+walks each call expression's AST ancestors up to its enclosing
+method and checks for an actual `for`/`for-each`/`while`/`do-while`
+statement among them, recorded as `MethodCallInfo.insideLoop` and
+carried through to the matching `CrudOperationInfo` one-to-one (no
+guessing at correspondence after the fact - `CrudAnalyzer` sets it
+from the exact call site it's already iterating).
+
+**Scope, explicitly**: only READ operations are flagged as N+1
+risk. A write call (save/update/delete) inside a loop is a real
+but different performance concern - repeated writes don't cause
+extra *queries* the way lazy reads do, and whether Spring Data
+batches them depends on JPA batch-size configuration this tool
+can't see - so it's left alone rather than folded into a finding
+name it doesn't match. Loop detection itself only recognizes
+actual loop *statements* - a `Stream`/`Collection` iteration
+written as `orders.forEach(o -> repo.save(o))` is not detected,
+since that's a method call (the receiver's actual type would need
+to be resolved to tell it apart from any other lambda-accepting
+call). A hand-written `for`/`while`/`for-each` loop around a
+repository call - the far more common real-world source of N+1
+bugs - is still caught correctly, including one written *inside*
+a lambda that is itself inside a loop.
+
+**Shared entity hotspot** flags an entity/table read or written by
+`SharedEntityHotspotAnalyzer.SHARED_ENTITY_THRESHOLD` (currently
+3) or more distinct classes - the persistence-layer equivalent of
+`GodClassAnalyzer`'s coupling signal, and, like every other
+threshold in this codebase, a fixed starting point rather than a
+scientifically precise cutoff. This was explicitly called out as
+"not attempted" in the Architecture Intelligence phase; it closes
+that gap with data already being collected.
+
+Verified end-to-end against a hand-written sample project: a
+`for-each` loop calling `OrderRepository.findById` per iteration
+(correctly flagged, while a `save()` call outside any loop in the
+same class was correctly left alone), and the `Order` entity
+accessed by three distinct services (correctly flagged at exactly
+the threshold). Both findings appeared correctly in the console
+output, `report.json`, and the HTML report's new "Persistence
+Findings" table.
+
 ## Parallelization scope
 
 Only the first pass (parsing + per-class structural analysis)

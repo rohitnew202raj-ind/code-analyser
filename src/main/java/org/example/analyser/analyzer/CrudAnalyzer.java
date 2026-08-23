@@ -51,7 +51,7 @@ public class CrudAnalyzer {
                             classes
                     );
 
-            operations.add(
+            CrudOperationInfo crudOperationInfo =
                     new CrudOperationInfo(
                             call.getSourceClass(),
                             call.getSourceMethod(),
@@ -60,8 +60,11 @@ public class CrudAnalyzer {
                             operation,
                             entityClass,
                             tableName
-                    )
-            );
+                    );
+
+            crudOperationInfo.setInsideLoop(call.isInsideLoop());
+
+            operations.add(crudOperationInfo);
         }
 
         return operations;

@@ -8,6 +8,16 @@ public class MethodCallInfo {
     private String targetClass;
     private String targetMethod;
 
+    /*
+     * Whether this call site is textually nested inside a
+     * Java loop construct (for/while/do-while/for-each) within
+     * its enclosing method. Defaults to false and is set
+     * explicitly by MethodCallAnalyzer - see its javadoc for
+     * what this does and doesn't detect (e.g. stream().forEach
+     * lambdas are out of scope for v1).
+     */
+    private boolean insideLoop;
+
     public MethodCallInfo() {
     }
 
@@ -53,5 +63,13 @@ public class MethodCallInfo {
 
     public void setTargetMethod(String targetMethod) {
         this.targetMethod = targetMethod;
+    }
+
+    public boolean isInsideLoop() {
+        return insideLoop;
+    }
+
+    public void setInsideLoop(boolean insideLoop) {
+        this.insideLoop = insideLoop;
     }
 }
