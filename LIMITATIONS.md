@@ -370,6 +370,35 @@ just not wired into a finding yet), and a configurable/pluggable
 threshold system for `GodClassAnalyzer` instead of a fixed
 constant.
 
+## Domain Intelligence: what "extraction candidate" means
+
+`DomainBoundaryAnalyzer` and `DomainCircularDependencyAnalyzer`
+suggest microservice-extraction candidates from the domain
+dependency graph `DomainDependencyAnalyzer` already computes -
+again, a structural query over existing data, not new parsing.
+Domain-level cycle detection reuses the exact same algorithm as
+class-level circular-dependency detection (`GraphCycleFinder`,
+extracted from `CircularDependencyAnalyzer` for this reason), and
+a domain caught in a cycle is treated as an automatic
+disqualifier (`BLOCKED_BY_CYCLE`), overriding whatever the raw
+coupling count would otherwise suggest - two domains that depend
+on each other cannot become separate deployable services without
+either merging back together or restructuring the dependency
+first.
+
+The one thing worth being explicit about: this is a **purely
+structural** signal, and structure alone cannot distinguish a
+genuinely cohesive small business domain from a domain that's
+small only because it's a leftover grouping of cross-cutting
+infrastructure classes (a `common` or `config` package, say) -
+both look identical from here: low class count, low cross-domain
+coupling. `EXTRACTION_CANDIDATE` means "structurally isolated,"
+not "this is definitely a good business boundary" - that
+judgment still needs a human who knows what the domain is
+actually *for*. Verified end-to-end against a hand-written sample
+covering all three verdicts (`EXTRACTION_CANDIDATE`, `TANGLED`,
+`BLOCKED_BY_CYCLE`) at once.
+
 ## Parallelization scope
 
 Only the first pass (parsing + per-class structural analysis)

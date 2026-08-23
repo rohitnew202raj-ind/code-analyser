@@ -7,6 +7,8 @@ import org.example.analyser.model.ClassInfo;
 import org.example.analyser.model.CrudOperationInfo;
 import org.example.analyser.model.DependencyGraph;
 import org.example.analyser.model.DependencyInfo;
+import org.example.analyser.model.DomainBoundaryInfo;
+import org.example.analyser.model.DomainCycle;
 import org.example.analyser.model.DomainDependency;
 import org.example.analyser.model.DomainInfo;
 import org.example.analyser.model.EntityMutationInfo;
@@ -46,7 +48,9 @@ public class ReportExporter {
             List<CrudOperationInfo> crudOperations,
             List<EntityMutationInfo> entityMutations,
             List<FlowPath> flows,
-            List<ArchitectureFinding> architectureFindings) {
+            List<ArchitectureFinding> architectureFindings,
+            List<DomainCycle> domainCycles,
+            List<DomainBoundaryInfo> domainBoundaries) {
     }
 
     public void export(
