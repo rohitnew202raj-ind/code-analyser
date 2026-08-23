@@ -15,13 +15,16 @@ public class DomainAnalyzer {
     public List<DomainInfo> analyze(
             List<ClassInfo> classes) {
 
+        PackageDomainExtractor domainExtractor =
+                PackageDomainExtractor.fit(classes);
+
         Map<String, DomainInfo> domains =
                 new LinkedHashMap<>();
 
         for (ClassInfo classInfo : classes) {
 
             String domain =
-                    extractDomain(
+                    domainExtractor.domainOf(
                             classInfo.getPackageName()
                     );
 
@@ -38,18 +41,5 @@ public class DomainAnalyzer {
         return new ArrayList<>(
                 domains.values()
         );
-    }
-
-    private String extractDomain(
-            String packageName) {
-
-        String[] parts =
-                packageName.split("\\.");
-
-        if (parts.length < 4) {
-            return "core";
-        }
-
-        return parts[3];
     }
 }

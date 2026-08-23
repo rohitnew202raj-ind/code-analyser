@@ -29,10 +29,6 @@ public class CrudAnalyzer {
                             call.getTargetMethod()
                     );
 
-            if (operation == null) {
-                continue;
-            }
-
             ClassInfo repository =
                     findClass(
                             classes,
@@ -87,18 +83,39 @@ public class CrudAnalyzer {
         );
     }
 
+    /*
+     * LIMITATION (documented): this covers Spring Data's
+     * built-in and derived-query method name conventions.
+     * Anything matching none of them - a hand-written
+     * @Query-annotated method with an arbitrary name, for
+     * instance - is still reported (as CUSTOM_QUERY) rather
+     * than silently dropped, which is the actual bug fix here:
+     * the previous version returned null for anything
+     * unrecognized, which the caller then discarded entirely,
+     * *including* existsById() (it only matched the exact
+     * literal "exists", not the "existsBy..." family Spring
+     * Data actually generates).
+     */
     private String detectOperation(
             String methodName) {
 
-        if (methodName.equals("save")) {
+        if (methodName.equals("save")
+                || methodName.equals("saveAll")
+                || methodName.equals("saveAndFlush")) {
+
             return "CREATE_OR_UPDATE";
+        }
+
+        if (methodName.startsWith("update")) {
+            return "UPDATE";
         }
 
         if (methodName.startsWith("find")
                 || methodName.startsWith("get")
                 || methodName.startsWith("read")
-                || methodName.equals("count")
-                || methodName.equals("exists")) {
+                || methodName.startsWith("query")
+                || methodName.startsWith("count")
+                || methodName.startsWith("exists")) {
 
             return "READ";
         }
@@ -109,7 +126,11 @@ public class CrudAnalyzer {
             return "DELETE";
         }
 
-        return null;
+        if (methodName.equals("flush")) {
+            return "FLUSH";
+        }
+
+        return "CUSTOM_QUERY";
     }
 
     private ClassInfo findClass(
@@ -124,18 +145,24 @@ public class CrudAnalyzer {
                 .orElse(null);
     }
 
+    /*
+     * LIMITATION (documented, partially addressed): prefer
+     * the entity type ClassAnalyzer already derived from the
+     * repository's actual generic declaration
+     * (JpaRepository<Entity, Id>, resolved transitively
+     * through custom base repositories too - see
+     * RepositoryInheritanceResolver). Only fall back to
+     * guessing from the repository's *name* when that isn't
+     * available, since a repository named e.g. "OrdersDao" or
+     * "IOrderRepository" won't match any name-based guess.
+     */
     private String findEntityForRepository(
             ClassInfo repository,
             List<ClassInfo> classes) {
 
-        /*
-         * First version:
-         *
-         * Infer entity from repository package/domain.
-         *
-         * CustomerRepository -> Customer
-         * OrderRepository    -> OrderEntity
-         */
+        if (repository.getRepositoryEntityType() != null) {
+            return repository.getRepositoryEntityType();
+        }
 
         String repositoryName =
                 repository.getName();
@@ -181,17 +208,83 @@ public class CrudAnalyzer {
                         entityClass
                 );
 
-        if (entity == null) {
+        return findTableName(entity, classes, 0);
+    }
+
+    /*
+     * LIMITATION (documented): only handles @Table declared
+     * directly on the entity or inherited from a
+     * @MappedSuperclass in its extends chain, then falls back
+     * to a snake_case of the class name. A project-wide custom
+     * Hibernate PhysicalNamingStrategy bean (which can rename
+     * tables using arbitrary rules) is not something a static
+     * analyzer can know about without interpreting arbitrary
+     * Spring configuration - not attempted here.
+     */
+    private String findTableName(
+            ClassInfo entity,
+            List<ClassInfo> classes,
+            int depth) {
+
+        if (entity == null || depth > 10) {
             return null;
         }
 
-        return entity.getAnnotations()
-                .stream()
-                .filter(annotation ->
-                        annotation.startsWith("@Table"))
-                .map(this::extractTableName)
-                .findFirst()
-                .orElse(null);
+        String explicitTable =
+                entity.getAnnotations()
+                        .stream()
+                        .filter(annotation ->
+                                annotation.startsWith("@Table"))
+                        .map(this::extractTableName)
+                        .filter(name -> name != null)
+                        .findFirst()
+                        .orElse(null);
+
+        if (explicitTable != null) {
+            return explicitTable;
+        }
+
+        boolean mappedSuperclass =
+                entity.getAnnotationSimpleNames()
+                        .contains("MappedSuperclass");
+
+        for (String extendedType : entity.getExtendedTypes()) {
+
+            ClassInfo parent =
+                    findClass(classes, extendedType);
+
+            if (parent == null) {
+                continue;
+            }
+
+            boolean parentIsMappedSuperclassOrEntity =
+                    parent.getAnnotationSimpleNames()
+                            .contains("MappedSuperclass")
+                            || "ENTITY".equals(parent.getType());
+
+            if (mappedSuperclass
+                    || parentIsMappedSuperclassOrEntity) {
+
+                String inherited =
+                        findTableName(
+                                parent,
+                                classes,
+                                depth + 1
+                        );
+
+                if (inherited != null) {
+                    return inherited;
+                }
+            }
+        }
+
+        if (depth == 0) {
+            return SnakeCaseConverter.toSnakeCase(
+                    entity.getName()
+            );
+        }
+
+        return null;
     }
 
     private String extractTableName(

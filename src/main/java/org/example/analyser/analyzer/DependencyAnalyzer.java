@@ -14,6 +14,9 @@ public class DependencyAnalyzer {
     public List<DependencyInfo> analyze(
             List<ClassInfo> classes) {
 
+        ClassRegistry registry =
+                new ClassRegistry(classes);
+
         List<DependencyInfo> applicationDependencies =
                 new ArrayList<>();
 
@@ -27,9 +30,8 @@ public class DependencyAnalyzer {
                 if (dependency.getType()
                         == DependencyType.ENTITY_RELATIONSHIP) {
 
-                    if (isApplicationClass(
-                            classes,
-                            dependency.getTargetClass())) {
+                    if (registry.findBySimpleName(
+                            dependency.getTargetClass()) != null) {
 
                         applicationDependencies.add(
                                 dependency
@@ -43,10 +45,7 @@ public class DependencyAnalyzer {
                         dependency.getTargetClass();
 
                 ClassInfo targetClass =
-                        findClass(
-                                classes,
-                                targetType
-                        );
+                        registry.findBySimpleName(targetType);
 
                 if (targetClass == null) {
                     continue;
@@ -54,7 +53,6 @@ public class DependencyAnalyzer {
 
                 DependencyType dependencyType =
                         classifyDependency(
-                                sourceClass,
                                 targetClass
                         );
 
@@ -76,33 +74,18 @@ public class DependencyAnalyzer {
     // ==========================================
 
     private DependencyType classifyDependency(
-            ClassInfo sourceClass,
             ClassInfo targetClass) {
 
         // Repository dependency
+        //
+        // Previously, a plain @Component depending on a
+        // repository was guessed to be "batch" here. That
+        // heuristic is gone now that BatchAnalyzer detects
+        // actual batch/scheduling signals (@Scheduled,
+        // Spring Batch interfaces, etc.) instead of guessing
+        // from a component's declared type.
         if ("REPOSITORY".equals(
                 targetClass.getType())) {
-
-            /*
-             * LIMITATION (temporary heuristic):
-             * We're treating any plain @Component that
-             * depends on a repository as "batch."
-             *
-             * @Component does not necessarily mean "batch" -
-             * it's just the closest signal we have right now,
-             * and it happened to hold for our test project.
-             *
-             * We'll replace this with a proper BatchAnalyzer
-             * that looks at @Scheduled, Spring Batch types
-             * (Job/Step/Tasklet/ItemReader/ItemWriter), etc.
-             * Batch programs matter as much as REST APIs for
-             * the actual migration scenario (5 batch programs).
-             */
-            if ("COMPONENT".equals(
-                    sourceClass.getType())) {
-
-                return DependencyType.BATCH_DEPENDENCY;
-            }
 
             return DependencyType.REPOSITORY_DEPENDENCY;
         }
@@ -115,50 +98,5 @@ public class DependencyAnalyzer {
         }
 
         return DependencyType.UNKNOWN;
-    }
-
-    // ==========================================
-    // FIND APPLICATION CLASS
-    // ==========================================
-
-    /*
-     * LIMITATION (deliberately accepted for now):
-     * We match classes by simple name only
-     * (target.getName().equals(className)).
-     *
-     * This works for our current application, but a real
-     * monolith can contain two classes with the same simple
-     * name in different packages, e.g.:
-     *
-     *   com.company.sales.CustomerService
-     *   com.company.reporting.CustomerService
-     *
-     * Simple-name matching becomes ambiguous in that case -
-     * we'd resolve a dependency to the wrong class.
-     *
-     * We'll fix this later with the JavaParser Symbol Solver
-     * (fully qualified type resolution). Do NOT add Symbol
-     * Solver yet - out of scope for now.
-     */
-    private ClassInfo findClass(
-            List<ClassInfo> classes,
-            String className) {
-
-        return classes.stream()
-                .filter(clazz ->
-                        clazz.getName()
-                                .equals(className))
-                .findFirst()
-                .orElse(null);
-    }
-
-    private boolean isApplicationClass(
-            List<ClassInfo> classes,
-            String className) {
-
-        return findClass(
-                classes,
-                className
-        ) != null;
     }
 }

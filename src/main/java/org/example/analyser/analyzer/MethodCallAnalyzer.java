@@ -1,16 +1,25 @@
 package org.example.analyser.analyzer;
 
 import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.MethodCallExpr;
+import com.github.javaparser.ast.expr.NameExpr;
 import org.example.analyser.model.ClassInfo;
 import org.example.analyser.model.MethodCallInfo;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 @Component
 public class MethodCallAnalyzer {
+
+    private final TypeResolver typeResolver;
+
+    public MethodCallAnalyzer(TypeResolver typeResolver) {
+        this.typeResolver = typeResolver;
+    }
 
     public List<MethodCallInfo> analyze(
             MethodDeclaration method,
@@ -29,6 +38,7 @@ public class MethodCallAnalyzer {
                     String targetClass =
                             resolveTargetClass(
                                     call,
+                                    method,
                                     sourceClass,
                                     allClasses
                             );
@@ -52,8 +62,31 @@ public class MethodCallAnalyzer {
 
     private String resolveTargetClass(
             MethodCallExpr call,
+            MethodDeclaration method,
             ClassInfo sourceClass,
             List<ClassInfo> allClasses) {
+
+        /*
+         * Preferred path: ask the Symbol Solver which class
+         * actually declares the resolved method. This is the
+         * only way to correctly resolve chained calls
+         * (a.b().c()) and calls on a local variable, both of
+         * which the scope-based heuristic below can't handle.
+         * It naturally fails for calls into external framework
+         * types (not on our classpath), which is fine - we
+         * fall through to the heuristic for those.
+         */
+        Optional<String> declaringType =
+                typeResolver.resolveDeclaringType(call);
+
+        if (declaringType.isPresent()
+                && isApplicationClass(
+                declaringType.get(),
+                allClasses
+        )) {
+
+            return declaringType.get();
+        }
 
         /*
          * Case 1:
@@ -63,7 +96,6 @@ public class MethodCallAnalyzer {
          * or
          *
          * place()
-         *
          */
         if (call.getScope().isEmpty()) {
 
@@ -86,128 +118,46 @@ public class MethodCallAnalyzer {
          * orders.save()
          * customers.find()
          *
-         * We currently resolve the variable
-         * against fields in ClassInfo.
+         * Resolve the scope variable's declared type via
+         * TypeResolver - covers fields, method parameters,
+         * and local variables (the old implementation here
+         * only ever checked fields).
          */
 
-        String scope =
-                call.getScope()
-                        .get()
-                        .toString();
+        Expression scope =
+                call.getScope().get();
 
-        for (String field :
-                sourceClass.getFields()) {
+        if (!(scope instanceof NameExpr nameExpr)) {
+            return null;
+        }
 
-            String fieldName =
-                    extractFieldName(field);
+        String variableType =
+                typeResolver.resolveVariableType(
+                        nameExpr.getNameAsString(),
+                        method,
+                        sourceClass,
+                        allClasses
+                );
 
-            if (!scope.equals(fieldName)) {
-                continue;
-            }
+        if (variableType == null) {
+            return null;
+        }
 
-            String fieldType =
-                    extractFieldType(field);
-
-            if (fieldType == null) {
-                return null;
-            }
-
-            boolean applicationClass =
-                    allClasses.stream()
-                            .anyMatch(clazz ->
-                                    clazz.getName()
-                                            .equals(fieldType)
-                            );
-
-            if (applicationClass) {
-                return fieldType;
-            }
+        if (isApplicationClass(variableType, allClasses)) {
+            return variableType;
         }
 
         return null;
     }
 
-    private String extractFieldName(
-            String fieldDeclaration) {
+    private boolean isApplicationClass(
+            String className,
+            List<ClassInfo> allClasses) {
 
-        /*
-         * Example:
-         *
-         * private final OrderRepository orders;
-         *
-         * We want:
-         *
-         * orders
-         */
-
-        String declaration =
-                fieldDeclaration
-                        .replace(";", "")
-                        .trim();
-
-        int equalsIndex =
-                declaration.indexOf("=");
-
-        if (equalsIndex >= 0) {
-            declaration =
-                    declaration.substring(
-                            0,
-                            equalsIndex
-                    ).trim();
-        }
-
-        String[] parts =
-                declaration.split("\\s+");
-
-        if (parts.length == 0) {
-            return null;
-        }
-
-        String last =
-                parts[parts.length - 1];
-
-        return last;
-    }
-
-    private String extractFieldType(
-            String fieldDeclaration) {
-
-        /*
-         * Example:
-         *
-         * private final OrderRepository orders;
-         *
-         * parts:
-         *
-         * private
-         * final
-         * OrderRepository
-         * orders
-         */
-
-        String declaration =
-                fieldDeclaration
-                        .replace(";", "")
-                        .trim();
-
-        int equalsIndex =
-                declaration.indexOf("=");
-
-        if (equalsIndex >= 0) {
-            declaration =
-                    declaration.substring(
-                            0,
-                            equalsIndex
-                    ).trim();
-        }
-
-        String[] parts =
-                declaration.split("\\s+");
-
-        if (parts.length < 2) {
-            return null;
-        }
-
-        return parts[parts.length - 2];
+        return allClasses.stream()
+                .anyMatch(clazz ->
+                        clazz.getName()
+                                .equals(className)
+                );
     }
 }

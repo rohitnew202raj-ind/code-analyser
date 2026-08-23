@@ -2,17 +2,84 @@ package org.example.analyser.analyzer;
 
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.VariableDeclarator;
+import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
-import com.github.javaparser.ast.expr.VariableDeclarationExpr;
 import org.example.analyser.model.ClassInfo;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 @Component
 public class TypeResolver {
+
+    /**
+     * Resolve the Java type of an arbitrary expression using
+     * the JavaParser Symbol Solver.
+     *
+     * This is the preferred resolution path: unlike the
+     * heuristics below, it correctly handles chained calls
+     * (a.b().c()), overload-aware method resolution, and
+     * expressions inside lambda bodies.
+     *
+     * LIMITATION (documented, expected): the solver is only
+     * configured with the target project's own source plus
+     * the JDK. Types that only exist in external framework
+     * jars (Spring, JPA, etc. themselves - as opposed to the
+     * target project's classes that use them) will fail to
+     * resolve, since those jars are not on the analyzer's
+     * classpath. That's why every call site falls back to the
+     * older heuristics below when this returns empty, rather
+     * than replacing them outright.
+     */
+    public Optional<String> resolveType(Expression expression) {
+
+        try {
+
+            String described =
+                    expression
+                            .calculateResolvedType()
+                            .describe();
+
+            return Optional.ofNullable(
+                    normalizeTypeName(described)
+            );
+
+        } catch (RuntimeException unresolved) {
+
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Resolve the class that actually declares the method
+     * being called (accounts for inheritance - a call
+     * inherited from a base class resolves to the class that
+     * declares it), via the Symbol Solver. Falls back to null
+     * when the call can't be resolved (typically because it
+     * targets a type outside the configured classpath, e.g.
+     * an external framework interface).
+     */
+    public Optional<String> resolveDeclaringType(
+            MethodCallExpr call) {
+
+        try {
+
+            String qualifiedName =
+                    call.resolve()
+                            .declaringType()
+                            .getQualifiedName();
+
+            return Optional.ofNullable(
+                    normalizeTypeName(qualifiedName)
+            );
+
+        } catch (RuntimeException unresolved) {
+
+            return Optional.empty();
+        }
+    }
 
     /**
      * Resolve the Java type represented by a variable
@@ -37,6 +104,17 @@ public class TypeResolver {
 
         if (variableName == null) {
             return null;
+        }
+
+        // ==========================================
+        // 0. SYMBOL SOLVER (preferred when it works)
+        // ==========================================
+
+        Optional<String> resolved =
+                resolveViaSymbolSolver(variableName, method);
+
+        if (resolved.isPresent()) {
+            return resolved.get();
         }
 
         // ==========================================
@@ -85,6 +163,30 @@ public class TypeResolver {
         }
 
         return null;
+    }
+
+    private Optional<String> resolveViaSymbolSolver(
+            String variableName,
+            MethodDeclaration method) {
+
+        /*
+         * Try every usage of the variable, not just the
+         * first one - a given occurrence can fail to resolve
+         * (e.g. it's involved in a call chain into an
+         * external, unresolvable framework type) while a
+         * different occurrence of the same variable resolves
+         * fine.
+         */
+        return method.findAll(NameExpr.class)
+                .stream()
+                .filter(nameExpr ->
+                        nameExpr.getNameAsString()
+                                .equals(variableName)
+                )
+                .map(this::resolveType)
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .findFirst();
     }
 
     // =========================================================
@@ -242,7 +344,7 @@ public class TypeResolver {
     // =========================================================
 
     private String inferExpressionType(
-            com.github.javaparser.ast.expr.Expression expression,
+            Expression expression,
             MethodDeclaration method) {
 
         /*
@@ -290,33 +392,9 @@ public class TypeResolver {
             MethodDeclaration method) {
 
         /*
-         * We need the repository variable.
-         *
-         * Example:
-         *
-         * orders.findById(id)
-         *
-         * repositoryVariable = orders
-         */
-        String repositoryVariable =
-                call.getScope()
-                        .filter(scope ->
-                                scope instanceof NameExpr)
-                        .map(scope ->
-                                ((NameExpr) scope)
-                                        .getNameAsString())
-                        .orElse(null);
-
-        if (repositoryVariable == null) {
-            return null;
-        }
-
-        /*
-         * At this layer we can determine the repository
-         * variable's declared type from the method/class.
-         *
          * The actual ClassInfo lookup happens through
-         * the resolver overload below.
+         * the resolver overload below - this AST-only
+         * layer can't determine it without ClassInfo.
          */
         return null;
     }

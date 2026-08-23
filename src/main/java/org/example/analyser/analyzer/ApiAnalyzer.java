@@ -1,6 +1,5 @@
 package org.example.analyser.analyzer;
 
-import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.expr.AnnotationExpr;
@@ -11,29 +10,43 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Component
 public class ApiAnalyzer {
 
     public List<ApiInfo> analyze(
-            CompilationUnit compilationUnit,
             ClassOrInterfaceDeclaration clazz,
-            ClassInfo classInfo) {
+            ClassInfo classInfo,
+            Map<String, ClassOrInterfaceDeclaration> declarationsByName,
+            PackageDomainExtractor domainExtractor) {
 
         List<ApiInfo> apis = new ArrayList<>();
 
-        // Only analyze REST controllers
-        if (!"CONTROLLER".equals(classInfo.getType())) {
+        /*
+         * Analyze REST controllers and plain MVC/GraphQL
+         * controllers alike - GraphQL endpoints are typically
+         * declared on a plain @Controller, not @RestController.
+         */
+        if (!classInfo.hasRole("REST_CONTROLLER")
+                && !classInfo.hasRole("MVC_CONTROLLER")) {
+
             return apis;
         }
 
         String basePath =
                 findRequestMappingPath(clazz)
+                        .or(() ->
+                                findBasePathFromInterfaces(
+                                        classInfo,
+                                        declarationsByName
+                                )
+                        )
                         .orElse("");
 
         for (MethodDeclaration method :
-                clazz.getMethods()) {
+                methodSources(clazz, classInfo, declarationsByName)) {
 
             List<ApiMapping> mappings =
                     findMethodMappings(method);
@@ -41,10 +54,12 @@ public class ApiAnalyzer {
             for (ApiMapping mapping : mappings) {
 
                 String fullPath =
-                        combinePaths(
+                        mapping.isPathBased()
+                                ? combinePaths(
                                 basePath,
                                 mapping.path()
-                        );
+                        )
+                                : mapping.path();
 
                 ApiInfo api =
                         new ApiInfo(
@@ -53,8 +68,8 @@ public class ApiAnalyzer {
                                 method.getNameAsString(),
                                 mapping.httpMethod(),
                                 fullPath,
-                                extractDomain(
-                                        classInfo
+                                domainExtractor.domainOf(
+                                        classInfo.getPackageName()
                                 )
                         );
 
@@ -63,6 +78,85 @@ public class ApiAnalyzer {
         }
 
         return apis;
+    }
+
+    // ==========================================
+    // INTERFACE-DECLARED MAPPINGS
+    //
+    // Spring supports putting @RequestMapping /
+    // @GetMapping etc. on an interface and having the
+    // controller simply implement it without repeating the
+    // annotations. Only the concrete class's own methods
+    // were scanned before, so those endpoints were invisible.
+    // ==========================================
+
+    private List<MethodDeclaration> methodSources(
+            ClassOrInterfaceDeclaration clazz,
+            ClassInfo classInfo,
+            Map<String, ClassOrInterfaceDeclaration> declarationsByName) {
+
+        List<MethodDeclaration> sources =
+                new ArrayList<>(clazz.getMethods());
+
+        for (String implementedType : classInfo.getImplementedTypes()) {
+
+            ClassOrInterfaceDeclaration iface =
+                    declarationsByName.get(implementedType);
+
+            if (iface == null) {
+                continue;
+            }
+
+            for (MethodDeclaration ifaceMethod : iface.getMethods()) {
+
+                if (findMethodMappings(ifaceMethod).isEmpty()) {
+                    continue;
+                }
+
+                boolean overriddenWithOwnMapping =
+                        clazz.getMethods()
+                                .stream()
+                                .anyMatch(m ->
+                                        m.getNameAsString()
+                                                .equals(
+                                                        ifaceMethod
+                                                                .getNameAsString()
+                                                )
+                                                && !findMethodMappings(m)
+                                                .isEmpty()
+                                );
+
+                if (!overriddenWithOwnMapping) {
+                    sources.add(ifaceMethod);
+                }
+            }
+        }
+
+        return sources;
+    }
+
+    private Optional<String> findBasePathFromInterfaces(
+            ClassInfo classInfo,
+            Map<String, ClassOrInterfaceDeclaration> declarationsByName) {
+
+        for (String implementedType : classInfo.getImplementedTypes()) {
+
+            ClassOrInterfaceDeclaration iface =
+                    declarationsByName.get(implementedType);
+
+            if (iface == null) {
+                continue;
+            }
+
+            Optional<String> path =
+                    findRequestMappingPath(iface);
+
+            if (path.isPresent()) {
+                return path;
+            }
+        }
+
+        return Optional.empty();
     }
 
     // ==========================================
@@ -75,7 +169,7 @@ public class ApiAnalyzer {
         for (AnnotationExpr annotation :
                 clazz.getAnnotations()) {
 
-            if (!annotation.getNameAsString()
+            if (!AnnotationNames.simpleName(annotation)
                     .equals("RequestMapping")) {
 
                 continue;
@@ -101,7 +195,7 @@ public class ApiAnalyzer {
                 method.getAnnotations()) {
 
             String annotationName =
-                    annotation.getNameAsString();
+                    AnnotationNames.simpleName(annotation);
 
             switch (annotationName) {
 
@@ -111,7 +205,8 @@ public class ApiAnalyzer {
                                     "GET",
                                     extractPath(
                                             annotation
-                                    ).orElse("")
+                                    ).orElse(""),
+                                    true
                             )
                     );
                     break;
@@ -122,7 +217,8 @@ public class ApiAnalyzer {
                                     "POST",
                                     extractPath(
                                             annotation
-                                    ).orElse("")
+                                    ).orElse(""),
+                                    true
                             )
                     );
                     break;
@@ -133,7 +229,8 @@ public class ApiAnalyzer {
                                     "PUT",
                                     extractPath(
                                             annotation
-                                    ).orElse("")
+                                    ).orElse(""),
+                                    true
                             )
                     );
                     break;
@@ -144,7 +241,8 @@ public class ApiAnalyzer {
                                     "PATCH",
                                     extractPath(
                                             annotation
-                                    ).orElse("")
+                                    ).orElse(""),
+                                    true
                             )
                     );
                     break;
@@ -155,7 +253,8 @@ public class ApiAnalyzer {
                                     "DELETE",
                                     extractPath(
                                             annotation
-                                    ).orElse("")
+                                    ).orElse(""),
+                                    true
                             )
                     );
                     break;
@@ -169,12 +268,82 @@ public class ApiAnalyzer {
                     );
                     break;
 
+                case "QueryMapping":
+                    mappings.add(
+                            graphQlMapping(
+                                    "GRAPHQL_QUERY",
+                                    annotation,
+                                    method
+                            )
+                    );
+                    break;
+
+                case "MutationMapping":
+                    mappings.add(
+                            graphQlMapping(
+                                    "GRAPHQL_MUTATION",
+                                    annotation,
+                                    method
+                            )
+                    );
+                    break;
+
+                case "SubscriptionMapping":
+                    mappings.add(
+                            graphQlMapping(
+                                    "GRAPHQL_SUBSCRIPTION",
+                                    annotation,
+                                    method
+                            )
+                    );
+                    break;
+
+                case "SchemaMapping":
+                    mappings.add(
+                            graphQlMapping(
+                                    "GRAPHQL_SCHEMA_MAPPING",
+                                    annotation,
+                                    method
+                            )
+                    );
+                    break;
+
                 default:
                     break;
             }
         }
 
         return mappings;
+    }
+
+    /*
+     * LIMITATION (documented, not implemented): WebFlux
+     * functional routing (RouterFunction / route(GET("/x"),
+     * handler)) is not annotation-based, so it isn't detected
+     * here - recognizing it would mean following arbitrary
+     * fluent method-chain composition, a data-flow analysis
+     * problem rather than a per-annotation check. Likewise,
+     * full gRPC endpoint inventory would require reading
+     * generated .proto stubs, which usually aren't part of
+     * the scanned Java sources; only the @GrpcService class
+     * itself is tagged (see SpringComponentAnalyzer).
+     */
+    private ApiMapping graphQlMapping(
+            String kind,
+            AnnotationExpr annotation,
+            MethodDeclaration method) {
+
+        String field =
+                extractNamedAttribute(annotation, "field")
+                        .or(() ->
+                                extractNamedAttribute(
+                                        annotation,
+                                        "value"
+                                )
+                        )
+                        .orElse(method.getNameAsString());
+
+        return new ApiMapping(kind, field, false);
     }
 
     // ==========================================
@@ -195,10 +364,7 @@ public class ApiAnalyzer {
         if (!annotation.isNormalAnnotationExpr()) {
 
             mappings.add(
-                    new ApiMapping(
-                            "ANY",
-                            path
-                    )
+                    new ApiMapping("ANY", path, true)
             );
 
             return mappings;
@@ -219,10 +385,7 @@ public class ApiAnalyzer {
         if (methodPair.isEmpty()) {
 
             mappings.add(
-                    new ApiMapping(
-                            "ANY",
-                            path
-                    )
+                    new ApiMapping("ANY", path, true)
             );
 
             return mappings;
@@ -235,31 +398,31 @@ public class ApiAnalyzer {
 
         if (value.contains("GET")) {
             mappings.add(
-                    new ApiMapping("GET", path)
+                    new ApiMapping("GET", path, true)
             );
         }
 
         if (value.contains("POST")) {
             mappings.add(
-                    new ApiMapping("POST", path)
+                    new ApiMapping("POST", path, true)
             );
         }
 
         if (value.contains("PUT")) {
             mappings.add(
-                    new ApiMapping("PUT", path)
+                    new ApiMapping("PUT", path, true)
             );
         }
 
         if (value.contains("PATCH")) {
             mappings.add(
-                    new ApiMapping("PATCH", path)
+                    new ApiMapping("PATCH", path, true)
             );
         }
 
         if (value.contains("DELETE")) {
             mappings.add(
-                    new ApiMapping("DELETE", path)
+                    new ApiMapping("DELETE", path, true)
             );
         }
 
@@ -267,14 +430,28 @@ public class ApiAnalyzer {
     }
 
     // ==========================================
-    // PATH EXTRACTION
+    // PATH / ATTRIBUTE EXTRACTION
     // ==========================================
 
     private Optional<String> extractPath(
             AnnotationExpr annotation) {
 
+        return extractNamedAttribute(annotation, "value")
+                .or(() ->
+                        extractNamedAttribute(
+                                annotation,
+                                "path"
+                        )
+                );
+    }
+
+    private Optional<String> extractNamedAttribute(
+            AnnotationExpr annotation,
+            String attributeName) {
+
         // @GetMapping("/customers")
-        if (annotation.isSingleMemberAnnotationExpr()) {
+        if (attributeName.equals("value")
+                && annotation.isSingleMemberAnnotationExpr()) {
 
             return Optional.of(
                     annotation
@@ -295,9 +472,7 @@ public class ApiAnalyzer {
                     .stream()
                     .filter(pair ->
                             pair.getNameAsString()
-                                    .equals("value")
-                                    || pair.getNameAsString()
-                                    .equals("path")
+                                    .equals(attributeName)
                     )
                     .findFirst()
                     .map(pair ->
@@ -363,31 +538,12 @@ public class ApiAnalyzer {
     }
 
     // ==========================================
-    // DOMAIN
-    // ==========================================
-
-    private String extractDomain(
-            ClassInfo classInfo) {
-
-        String packageName =
-                classInfo.getPackageName();
-
-        String[] parts =
-                packageName.split("\\.");
-
-        if (parts.length >= 4) {
-            return parts[3];
-        }
-
-        return "core";
-    }
-
-    // ==========================================
     // INTERNAL RECORD
     // ==========================================
 
     private record ApiMapping(
             String httpMethod,
-            String path) {
+            String path,
+            boolean isPathBased) {
     }
 }
