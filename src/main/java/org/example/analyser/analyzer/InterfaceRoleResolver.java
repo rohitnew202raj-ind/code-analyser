@@ -27,13 +27,13 @@ import java.util.Set;
  * the interface itself carries no @Service annotation - only
  * OrderServiceImpl does. Without this resolver,
  * DependencyAnalyzer.classifyDependency looks at
- * OrderService.getType() (UNKNOWN, since interfaces aren't
- * annotated) instead of OrderServiceImpl's, so almost every
- * service-layer dependency edge in a codebase that programs to
- * interfaces - which is most of them - would be misclassified
- * as UNKNOWN. Confirmed on a ~860-class synthetic monolith:
- * every controller/facade -> service edge came back UNKNOWN
- * before this fix.
+ * OrderService.getType() (a generic INTERFACE fallback, since
+ * interfaces aren't annotated) instead of OrderServiceImpl's,
+ * so almost every service-layer dependency edge in a codebase
+ * that programs to interfaces - which is most of them - would
+ * be misclassified as a plain, unnamed dependency. Confirmed
+ * on a ~860-class synthetic monolith: every controller/facade
+ * -> service edge came back unclassified before this fix.
  *
  * LIMITATION (documented): when an interface has multiple
  * implementors with different roles (rare, but possible - a
@@ -41,8 +41,8 @@ import java.util.Set;
  * implementation), this can't know which one a given caller
  * actually gets wired to. It only propagates a role when every
  * implementor that has a recognized role agrees on the same
- * one; a genuine conflict is left unresolved (UNKNOWN) rather
- * than guessed.
+ * one; a genuine conflict is left unresolved (kept at its
+ * fallback classification) rather than guessed.
  */
 @Component
 public class InterfaceRoleResolver {

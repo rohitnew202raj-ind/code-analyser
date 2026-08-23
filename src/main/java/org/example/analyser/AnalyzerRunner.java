@@ -247,7 +247,7 @@ public class AnalyzerRunner implements CommandLineRunner {
         // the implementation carries the @Service/
         // @Repository annotation. Without this, dependency
         // classification of interface-typed fields - the
-        // normal case - falls back to UNKNOWN.
+        // normal case - falls back to a generic classification.
         // ======================================
 
         interfaceRoleResolver.resolve(classes);

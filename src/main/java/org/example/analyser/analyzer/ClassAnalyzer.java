@@ -153,7 +153,7 @@ public class ClassAnalyzer {
                                 clazz.getNameAsString(),
                                 targetType,
                                 fieldName,
-                                DependencyType.UNKNOWN
+                                DependencyType.OTHER_DEPENDENCY
                         );
 
                 classInfo.getDependencies()
@@ -182,6 +182,8 @@ public class ClassAnalyzer {
         // ======================================
 
         if (clazz instanceof ClassOrInterfaceDeclaration coid) {
+
+            classInfo.setInterfaceDeclaration(coid.isInterface());
 
             coid.getExtendedTypes().forEach(type -> {
 
