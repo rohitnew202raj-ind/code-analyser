@@ -322,6 +322,54 @@ collisions merging unrelated call chains together. Either way,
 `FlowPath.isTruncated()` says so explicitly rather than
 silently returning a partial result that looks complete.
 
+## Architecture Intelligence: scope of the four checks
+
+`CircularDependencyAnalyzer`, `GodClassAnalyzer`,
+`RepositoryBypassAnalyzer`, and `DeadComponentAnalyzer` are all
+structural queries over data the rest of the analyzer already
+computes correctly (the dependency graph, coupling numbers,
+roles, entry points) - none of them re-resolve anything on their
+own, so they inherit whatever precision that underlying data
+already has.
+
+- **Circular dependencies** are reported as whole strongly
+  connected components (Tarjan's algorithm), not as individual
+  elementary cycles - a tightly coupled group of N classes can
+  contain an exponential number of distinct cycle paths through
+  it, and enumerating them would bury the one thing that
+  actually matters under noise.
+- **God class** uses a fixed outgoing-coupling threshold (10),
+  not a configurable one - see `GodClassAnalyzer`'s javadoc for
+  where that number comes from and its honest limits.
+- **Layer violations** are checked as exactly one concrete case:
+  a controller depending directly on a repository
+  (`RepositoryBypassAnalyzer`). Broader, project-specific
+  layering policy ("domain X must never depend on domain Y")
+  isn't attempted - this analyzer has no way to infer such a
+  policy on its own, and guessing at one would be actively
+  misleading rather than merely incomplete.
+- **Dead/orphan components** are restricted to
+  `SERVICE`/`REPOSITORY`/`COMPONENT`-classified classes with zero
+  incoming dependency edges that aren't themselves an entry
+  point. Getting this right required one non-obvious exclusion:
+  a class that implements a `SERVICE`/`REPOSITORY`-classified
+  interface is never flagged, even with zero incoming edges of
+  its own - that's the normal shape of the standard "program to
+  an interface" Spring pattern (the interface carries the real
+  incoming edges, not the implementation), and flagging it
+  anyway would mean flagging essentially every correctly wired
+  `*Impl` class in a typical codebase. Verified end-to-end
+  against a small hand-written sample project covering all four
+  checks, including this exact interface-vs-implementation case.
+
+**Not attempted in this pass** (each is a reasonable follow-up,
+not an oversight): "shared entity hotspots" (entities/tables
+touched by an unusually large number of services - answerable
+from `CrudOperationInfo`/`EntityMutationInfo` already collected,
+just not wired into a finding yet), and a configurable/pluggable
+threshold system for `GodClassAnalyzer` instead of a fixed
+constant.
+
 ## Parallelization scope
 
 Only the first pass (parsing + per-class structural analysis)

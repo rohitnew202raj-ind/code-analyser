@@ -1,6 +1,7 @@
 package org.example.analyser.analyzer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.example.analyser.model.ArchitectureFinding;
 import org.example.analyser.model.ClassCouplingInfo;
 import org.example.analyser.model.ClassInfo;
 import org.example.analyser.model.CrudOperationInfo;
@@ -44,7 +45,8 @@ public class ReportExporter {
             List<MethodCallInfo> methodCalls,
             List<CrudOperationInfo> crudOperations,
             List<EntityMutationInfo> entityMutations,
-            List<FlowPath> flows) {
+            List<FlowPath> flows,
+            List<ArchitectureFinding> architectureFindings) {
     }
 
     public void export(
