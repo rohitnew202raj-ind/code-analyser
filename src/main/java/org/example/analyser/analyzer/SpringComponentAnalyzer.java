@@ -3,8 +3,13 @@ package org.example.analyser.analyzer;
 import org.example.analyser.model.ClassInfo;
 import org.springframework.stereotype.Component;
 
+import java.util.Set;
+
 @Component
 public class SpringComponentAnalyzer {
+
+    private static final Set<String> EXCEPTION_SUPERTYPES =
+            Set.of("Exception", "RuntimeException", "Error", "Throwable");
 
     /**
      * Classifies a class's primary type, and separately
@@ -97,7 +102,63 @@ public class SpringComponentAnalyzer {
             return "COMPONENT";
         }
 
-        return "UNKNOWN";
+        return fallbackType(classInfo);
+    }
+
+    /**
+     * Classifies a class that carries no recognized Spring
+     * stereotype. These are still real, distinct kinds of
+     * class - DTOs, domain events, exceptions, constants
+     * holders, plain interfaces, and so on - so collapsing all
+     * of them into a single "UNKNOWN" bucket would throw away
+     * information the report could otherwise surface. Ordered
+     * from most to least specific; POJO is the final catch-all
+     * for anything that matches none of the patterns below.
+     */
+    private String fallbackType(ClassInfo classInfo) {
+
+        if (isException(classInfo)) {
+            return "EXCEPTION";
+        }
+
+        String name = classInfo.getName();
+
+        if (name.endsWith("Event")) {
+            return "EVENT";
+        }
+
+        if (name.endsWith("Dto")) {
+            return "DTO";
+        }
+
+        if (name.endsWith("Constants")) {
+            return "CONSTANTS";
+        }
+
+        if (name.endsWith("Specification")) {
+            return "SPECIFICATION";
+        }
+
+        if (name.endsWith("Helper")
+                || name.endsWith("Utils")
+                || name.endsWith("Util")) {
+
+            return "UTILITY";
+        }
+
+        if (classInfo.isInterfaceDeclaration()) {
+            return "INTERFACE";
+        }
+
+        return "POJO";
+    }
+
+    private boolean isException(ClassInfo classInfo) {
+
+        return classInfo.getName().endsWith("Exception")
+                || classInfo.getExtendedTypes()
+                        .stream()
+                        .anyMatch(EXCEPTION_SUPERTYPES::contains);
     }
 
     private void addRoleIfPresent(

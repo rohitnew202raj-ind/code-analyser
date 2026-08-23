@@ -79,6 +79,28 @@ base repositories, event listeners, a God facade, etc.):
   signals. Now detected as a `MAIN_ENTRY_POINT` batch program,
   excluding the Spring Boot application's own `main()` (already
   captured separately as `APPLICATION`).
+- **Every non-Spring-annotated class (and every dependency onto
+  one) collapsed into a single, uninformative `UNKNOWN`.** DTOs,
+  domain events, exceptions, constants holders, mapper/validator
+  dependencies, plain interfaces - none of these carry a Spring
+  stereotype, but they're still distinct, recognizable kinds of
+  class. On the test monolith this was the single largest
+  category in the class inventory and dependency graph, both by
+  raw count. `SpringComponentAnalyzer` now falls back to a
+  specific classification (`DTO`, `EVENT`, `EXCEPTION`,
+  `CONSTANTS`, `SPECIFICATION`, `UTILITY`, `INTERFACE`, or a
+  final `POJO` catch-all) based on naming convention and
+  extends-clause when no stereotype annotation is present, and
+  `DependencyAnalyzer` gained a `COMPONENT_DEPENDENCY` type for
+  edges onto a plain `@Component` (mapper, validator, converter,
+  interceptor). The remaining fallback for a dependency that
+  matches none of those is named `OTHER_DEPENDENCY` rather than
+  `UNKNOWN`, so a lingering catch-all is still self-explanatory
+  in report output. Naming-convention classification is a
+  heuristic, unlike the annotation-based checks elsewhere in
+  this analyzer - a project with unconventional suffixes (e.g.
+  a DTO not ending in `Dto`) will fall through to `POJO`/
+  `OTHER_DEPENDENCY` rather than being misclassified.
 
 ## Also fixed along the way
 

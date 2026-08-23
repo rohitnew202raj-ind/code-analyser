@@ -10,6 +10,7 @@ public class ClassInfo {
     private String name;
     private String packageName;
     private String type;
+    private boolean interfaceDeclaration;
 
     /*
      * Classes can legitimately carry more than one Spring
@@ -125,6 +126,14 @@ public class ClassInfo {
 
     public void setType(String type) {
         this.type = type;
+    }
+
+    public boolean isInterfaceDeclaration() {
+        return interfaceDeclaration;
+    }
+
+    public void setInterfaceDeclaration(boolean interfaceDeclaration) {
+        this.interfaceDeclaration = interfaceDeclaration;
     }
 
     // =========================================================

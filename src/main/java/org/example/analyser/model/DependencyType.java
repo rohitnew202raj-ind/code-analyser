@@ -6,6 +6,13 @@ public enum DependencyType {
 
     REPOSITORY_DEPENDENCY,
 
+    /**
+     * Dependency on a plain {@code @Component} - a mapper,
+     * validator, converter, interceptor, etc. that isn't a
+     * service or repository.
+     */
+    COMPONENT_DEPENDENCY,
+
     ENTITY_RELATIONSHIP,
 
     /**
@@ -20,5 +27,10 @@ public enum DependencyType {
      */
     DIRECT_INSTANTIATION_DEPENDENCY,
 
-    UNKNOWN
+    /**
+     * Resolved target that isn't a service, repository, or
+     * component - e.g. a field of a DTO, event, or exception
+     * type.
+     */
+    OTHER_DEPENDENCY
 }

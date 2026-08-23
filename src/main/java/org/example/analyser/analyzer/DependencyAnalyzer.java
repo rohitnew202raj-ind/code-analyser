@@ -97,6 +97,15 @@ public class DependencyAnalyzer {
             return DependencyType.SERVICE_DEPENDENCY;
         }
 
-        return DependencyType.UNKNOWN;
+        // Plain @Component dependency (mapper, validator,
+        // converter, interceptor, ...) - a real, resolved
+        // dependency, just not a service or repository.
+        if ("COMPONENT".equals(
+                targetClass.getType())) {
+
+            return DependencyType.COMPONENT_DEPENDENCY;
+        }
+
+        return DependencyType.OTHER_DEPENDENCY;
     }
 }
