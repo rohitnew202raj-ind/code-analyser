@@ -9,24 +9,29 @@ import com.github.javaparser.ast.body.TypeDeclaration;
 import org.example.analyser.analyzer.AnnotationNames;
 import org.example.analyser.analyzer.ApiAnalyzer;
 import org.example.analyser.analyzer.BatchAnalyzer;
+import org.example.analyser.analyzer.CircularDependencyAnalyzer;
 import org.example.analyser.analyzer.ClassAnalyzer;
 import org.example.analyser.analyzer.CouplingAnalyzer;
 import org.example.analyser.analyzer.CrudAnalyzer;
+import org.example.analyser.analyzer.DeadComponentAnalyzer;
 import org.example.analyser.analyzer.DependencyAnalyzer;
 import org.example.analyser.analyzer.DependencyGraphBuilder;
 import org.example.analyser.analyzer.DomainAnalyzer;
 import org.example.analyser.analyzer.DomainDependencyAnalyzer;
 import org.example.analyser.analyzer.EntityMutationAnalyzer;
 import org.example.analyser.analyzer.FlowEngine;
+import org.example.analyser.analyzer.GodClassAnalyzer;
 import org.example.analyser.analyzer.InterfaceRoleResolver;
 import org.example.analyser.analyzer.MetaAnnotationResolver;
 import org.example.analyser.analyzer.MethodCallAnalyzer;
 import org.example.analyser.analyzer.PackageDomainExtractor;
+import org.example.analyser.analyzer.RepositoryBypassAnalyzer;
 import org.example.analyser.analyzer.RepositoryInheritanceResolver;
 import org.example.analyser.analyzer.ReportExporter;
 import org.example.analyser.analyzer.RuntimeDependencyAnalyzer;
 import org.example.analyser.analyzer.SpringComponentAnalyzer;
 
+import org.example.analyser.model.ArchitectureFinding;
 import org.example.analyser.model.ClassCouplingInfo;
 import org.example.analyser.model.ClassInfo;
 import org.example.analyser.model.CrudOperationInfo;
@@ -76,6 +81,10 @@ public class AnalyzerRunner implements CommandLineRunner {
     private final CrudAnalyzer crudAnalyzer;
     private final EntityMutationAnalyzer entityMutationAnalyzer;
     private final FlowEngine flowEngine;
+    private final CircularDependencyAnalyzer circularDependencyAnalyzer;
+    private final GodClassAnalyzer godClassAnalyzer;
+    private final RepositoryBypassAnalyzer repositoryBypassAnalyzer;
+    private final DeadComponentAnalyzer deadComponentAnalyzer;
     private final ReportExporter reportExporter;
 
     public AnalyzerRunner(
@@ -98,6 +107,10 @@ public class AnalyzerRunner implements CommandLineRunner {
             CrudAnalyzer crudAnalyzer,
             EntityMutationAnalyzer entityMutationAnalyzer,
             FlowEngine flowEngine,
+            CircularDependencyAnalyzer circularDependencyAnalyzer,
+            GodClassAnalyzer godClassAnalyzer,
+            RepositoryBypassAnalyzer repositoryBypassAnalyzer,
+            DeadComponentAnalyzer deadComponentAnalyzer,
             ReportExporter reportExporter) {
 
         this.projectScanner = projectScanner;
@@ -119,6 +132,10 @@ public class AnalyzerRunner implements CommandLineRunner {
         this.crudAnalyzer = crudAnalyzer;
         this.entityMutationAnalyzer = entityMutationAnalyzer;
         this.flowEngine = flowEngine;
+        this.circularDependencyAnalyzer = circularDependencyAnalyzer;
+        this.godClassAnalyzer = godClassAnalyzer;
+        this.repositoryBypassAnalyzer = repositoryBypassAnalyzer;
+        this.deadComponentAnalyzer = deadComponentAnalyzer;
         this.reportExporter = reportExporter;
     }
 
@@ -391,6 +408,36 @@ public class AnalyzerRunner implements CommandLineRunner {
                 couplingAnalyzer.analyze(dependencyGraph, methodCalls);
 
         // ======================================
+        // STEP 8b: ARCHITECTURE INTELLIGENCE
+        //
+        // Each of these is a structural query over data already
+        // computed above (the dependency graph, coupling numbers,
+        // roles, entry points) - none of them re-resolve anything
+        // themselves, and each documents its own scope/thresholds.
+        // ======================================
+
+        List<ArchitectureFinding> architectureFindings =
+                new ArrayList<>();
+
+        architectureFindings.addAll(
+                circularDependencyAnalyzer.analyze(dependencyGraph)
+        );
+
+        architectureFindings.addAll(
+                godClassAnalyzer.analyze(coupling)
+        );
+
+        architectureFindings.addAll(
+                repositoryBypassAnalyzer.analyze(dependencies, classes)
+        );
+
+        architectureFindings.addAll(
+                deadComponentAnalyzer.analyze(
+                        classes, coupling, entryPoints
+                )
+        );
+
+        // ======================================
         // STEP 9: DOMAINS
         // ======================================
 
@@ -415,7 +462,8 @@ public class AnalyzerRunner implements CommandLineRunner {
                         methodCalls,
                         crudOperations,
                         entityMutations,
-                        flows
+                        flows,
+                        architectureFindings
                 );
 
         try {
@@ -712,6 +760,29 @@ public class AnalyzerRunner implements CommandLineRunner {
                                 + "limit, results are incomplete)"
                 );
             }
+        }
+
+        // ======================================
+        // PRINT: ARCHITECTURE FINDINGS
+        // ======================================
+
+        System.out.println();
+        System.out.println("======================================");
+        System.out.println("       ARCHITECTURE FINDINGS");
+        System.out.println("======================================");
+
+        if (architectureFindings.isEmpty()) {
+
+            System.out.println("(none found)");
+
+        } else {
+
+            architectureFindings.forEach(finding ->
+                    System.out.println(
+                            "[" + finding.getType() + "] "
+                                    + finding.getDescription()
+                    )
+            );
         }
 
         System.out.println("--------------------------------------");
