@@ -3,6 +3,7 @@ package org.example.analyser.analyzer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.example.analyser.model.ArchitectureFinding;
 import org.example.analyser.model.ArchitectureFindingType;
+import org.example.analyser.model.BehaviorClassification;
 import org.example.analyser.model.ClassCouplingInfo;
 import org.example.analyser.model.ClassInfo;
 import org.example.analyser.model.CrudOperationInfo;
@@ -14,6 +15,7 @@ import org.example.analyser.model.DomainCycle;
 import org.example.analyser.model.DomainDependency;
 import org.example.analyser.model.DomainInfo;
 import org.example.analyser.model.EntityMutationInfo;
+import org.example.analyser.model.EntryPointBehavior;
 import org.example.analyser.model.EntryPointInfo;
 import org.example.analyser.model.FlowPath;
 import org.example.analyser.model.MethodCallInfo;
@@ -26,7 +28,9 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Writes the analysis out as structured JSON, Graphviz DOT,
@@ -48,9 +52,18 @@ import java.util.List;
  * (Graphviz tooling and Mermaid-native renderers) without a
  * third graph format only a couple of specialist tools consume.
  *
+ * {@code sequence-diagrams/*.mmd} is the dynamic counterpart to
+ * those static graphs: one Mermaid {@code sequenceDiagram} per
+ * entry point, showing the actual call order {@code FlowEngine}
+ * traced for it - what a dependency graph's unordered edges
+ * can't show. Written as one file per entry point, same rationale
+ * as everywhere else in this class: Mermaid source text, no
+ * rendering pipeline of our own.
+ *
  * The HTML report is a summary, not a full data dump: it covers
  * architecture and persistence findings, domain boundaries, and
- * the entry-point inventory -
+ * the entry-point inventory (now including each entry point's
+ * READ_ONLY/MUTATING behavior classification) -
  * the sections short enough to be genuinely more readable as an
  * HTML table than as {@code report.json}. The full class
  * inventory, method-call graph, CRUD, and entity-mutation data
@@ -82,7 +95,8 @@ public class ReportExporter {
             List<ArchitectureFinding> architectureFindings,
             List<DomainCycle> domainCycles,
             List<DomainBoundaryInfo> domainBoundaries,
-            List<PersistenceFinding> persistenceFindings) {
+            List<PersistenceFinding> persistenceFindings,
+            List<EntryPointBehavior> entryPointBehaviors) {
     }
 
     public void export(
@@ -126,6 +140,118 @@ public class ReportExporter {
                 outputDirectory.resolve("report.html"),
                 toHtmlReport(report)
         );
+
+        writeSequenceDiagrams(outputDirectory, report.flows());
+    }
+
+    /**
+     * One Mermaid {@code sequenceDiagram} per entry point,
+     * written under {@code sequence-diagrams/} - the dynamic
+     * counterpart to the static dependency/domain diagrams:
+     * "in what order do these classes actually talk to each
+     * other when this entry point runs," which a dependency
+     * graph (edges with no ordering) can't show. Generated as
+     * Mermaid source text for the same reason as the Phase 5
+     * diagrams - paste into a GitHub markdown fence or
+     * mermaid.live, no rendering pipeline of our own.
+     *
+     * One file per entry point rather than one combined file:
+     * Mermaid's {@code sequenceDiagram} syntax describes exactly
+     * one diagram, so a project with many entry points would
+     * need many separate fenced blocks anyway - a directory of
+     * small, individually pasteable files is more useful than
+     * one large file nothing can render as a whole.
+     */
+    private void writeSequenceDiagrams(
+            Path outputDirectory,
+            List<FlowPath> flows) throws IOException {
+
+        if (flows.isEmpty()) {
+            return;
+        }
+
+        Path sequenceDiagramsDirectory =
+                outputDirectory.resolve("sequence-diagrams");
+
+        Files.createDirectories(sequenceDiagramsDirectory);
+
+        Set<String> usedFileNames = new LinkedHashSet<>();
+
+        for (FlowPath flow : flows) {
+
+            String fileName =
+                    sequenceDiagramFileName(
+                            flow.getEntryPoint(),
+                            usedFileNames
+                    );
+
+            Files.writeString(
+                    sequenceDiagramsDirectory.resolve(fileName),
+                    toSequenceDiagram(flow)
+            );
+        }
+    }
+
+    private String sequenceDiagramFileName(
+            EntryPointInfo entryPoint,
+            Set<String> usedFileNames) {
+
+        String base =
+                mermaidId(entryPoint.getClassName())
+                        + "-" + mermaidId(entryPoint.getMethodName());
+
+        String candidate = base;
+        int suffix = 2;
+
+        while (!usedFileNames.add(candidate)) {
+            candidate = base + "-" + suffix;
+            suffix++;
+        }
+
+        return candidate + ".mmd";
+    }
+
+    private String toSequenceDiagram(FlowPath flow) {
+
+        EntryPointInfo entryPoint = flow.getEntryPoint();
+
+        StringBuilder mermaid = new StringBuilder();
+        mermaid.append("sequenceDiagram\n");
+
+        Set<String> participants = new LinkedHashSet<>();
+        participants.add(entryPoint.getClassName());
+
+        for (MethodCallInfo step : flow.getSteps()) {
+            participants.add(step.getSourceClass());
+            participants.add(step.getTargetClass());
+        }
+
+        for (String participant : participants) {
+            mermaid.append("    participant ")
+                    .append(mermaidId(participant))
+                    .append("\n");
+        }
+
+        for (MethodCallInfo step : flow.getSteps()) {
+
+            mermaid.append("    ")
+                    .append(mermaidId(step.getSourceClass()))
+                    .append("->>")
+                    .append(mermaidId(step.getTargetClass()))
+                    .append(": ")
+                    .append(mermaidLabel(step.getTargetMethod()))
+                    .append("()\n");
+        }
+
+        if (flow.isTruncated()) {
+
+            mermaid.append("    Note over ")
+                    .append(mermaidId(entryPoint.getClassName()))
+                    .append(": flow truncated - reachable call ")
+                    .append("graph exceeded the safety limit\n");
+        }
+
+        return mermaid.toString();
     }
 
     private String toDependencyDot(DependencyGraph graph) {
@@ -371,12 +497,16 @@ public class ReportExporter {
         appendPersistenceFindingsSection(html, report.persistenceFindings());
         appendDomainBoundarySection(html, report.domainCycles(), report.domainBoundaries());
         appendDomainOverviewSection(html, report.domains());
-        appendEntryPointSection(html, report.entryPoints());
+        appendEntryPointSection(
+                html, report.entryPoints(), report.entryPointBehaviors()
+        );
 
         html.append("<p class=\"footer\">Full data: <code>report.json</code>. ")
                 .append("Full dependency/domain graphs: ")
                 .append("<code>dependency-graph.dot</code>/<code>.mmd</code>, ")
-                .append("<code>domain-graph.dot</code>/<code>.mmd</code> ")
+                .append("<code>domain-graph.dot</code>/<code>.mmd</code>. ")
+                .append("Per-entry-point call sequences: ")
+                .append("<code>sequence-diagrams/*.mmd</code> ")
                 .append("(paste a <code>.mmd</code> file into a GitHub markdown ")
                 .append("<code>```mermaid</code> code fence, or ")
                 .append("mermaid.live, to render it).</p>\n");
@@ -413,6 +543,15 @@ public class ReportExporter {
         appendStatCard(
                 html, "Persistence findings",
                 report.persistenceFindings().size()
+        );
+        appendStatCard(
+                html, "Mutating entry points",
+                report.entryPointBehaviors().stream()
+                        .filter(behavior ->
+                                behavior.getClassification()
+                                        == BehaviorClassification.MUTATING
+                        )
+                        .count()
         );
         html.append("</div>\n");
     }
@@ -549,8 +688,18 @@ public class ReportExporter {
         html.append("</table>\n");
     }
 
+    /*
+     * entryPoints and entryPointBehaviors are always the same
+     * size and in the same order - FlowEngine produces exactly
+     * one FlowPath per entry point, in input order, and
+     * EntryPointBehaviorAnalyzer is a 1:1 map over those flows -
+     * so they're zipped here by index rather than needing
+     * EntryPointInfo to support equality/lookup.
+     */
     private void appendEntryPointSection(
-            StringBuilder html, List<EntryPointInfo> entryPoints) {
+            StringBuilder html,
+            List<EntryPointInfo> entryPoints,
+            List<EntryPointBehavior> entryPointBehaviors) {
 
         html.append("<h2>Entry Points</h2>\n");
 
@@ -560,9 +709,17 @@ public class ReportExporter {
         }
 
         html.append("<table>\n<tr><th>Trigger</th><th>Path</th>")
-                .append("<th>Class.Method</th><th>Domain</th></tr>\n");
+                .append("<th>Class.Method</th><th>Domain</th>")
+                .append("<th>Behavior</th></tr>\n");
 
-        for (EntryPointInfo entryPoint : entryPoints) {
+        for (int i = 0; i < entryPoints.size(); i++) {
+
+            EntryPointInfo entryPoint = entryPoints.get(i);
+
+            BehaviorClassification classification =
+                    i < entryPointBehaviors.size()
+                            ? entryPointBehaviors.get(i).getClassification()
+                            : null;
 
             html.append("<tr><td>")
                     .append(htmlEscape(entryPoint.getTriggerType()))
@@ -578,6 +735,18 @@ public class ReportExporter {
                     .append(htmlEscape(entryPoint.getMethodName()))
                     .append("</td><td>")
                     .append(htmlEscape(entryPoint.getDomain()))
+                    .append("</td><td>")
+                    .append(
+                            classification != null
+                                    ? "<span class=\"badge badge-"
+                                            + classification.name()
+                                                    .toLowerCase()
+                                                    .replace('_', '-')
+                                            + "\">"
+                                            + htmlEscape(classification.name())
+                                            + "</span>"
+                                    : "&#8212;"
+                    )
                     .append("</td></tr>\n");
         }
 
@@ -636,6 +805,8 @@ public class ReportExporter {
                 .badge-blocked-by-cycle { background: #ffe0b2; color: #7a3c00; }
                 .badge-n-plus-one-query-risk { background: #ffcdd2; color: #7f0000; }
                 .badge-shared-entity-hotspot { background: #ffe0b2; color: #7a3c00; }
+                .badge-read-only { background: #c8e6c9; color: #1b5e20; }
+                .badge-mutating { background: #ffe0b2; color: #7a3c00; }
                 """;
     }
 }

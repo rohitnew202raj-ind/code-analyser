@@ -21,6 +21,7 @@ import org.example.analyser.analyzer.DomainBoundaryAnalyzer;
 import org.example.analyser.analyzer.DomainCircularDependencyAnalyzer;
 import org.example.analyser.analyzer.DomainDependencyAnalyzer;
 import org.example.analyser.analyzer.EntityMutationAnalyzer;
+import org.example.analyser.analyzer.EntryPointBehaviorAnalyzer;
 import org.example.analyser.analyzer.FlowEngine;
 import org.example.analyser.analyzer.GodClassAnalyzer;
 import org.example.analyser.analyzer.InterfaceRoleResolver;
@@ -46,6 +47,7 @@ import org.example.analyser.model.DomainCycle;
 import org.example.analyser.model.DomainDependency;
 import org.example.analyser.model.DomainInfo;
 import org.example.analyser.model.EntityMutationInfo;
+import org.example.analyser.model.EntryPointBehavior;
 import org.example.analyser.model.EntryPointInfo;
 import org.example.analyser.model.FlowPath;
 import org.example.analyser.model.MethodCallInfo;
@@ -88,6 +90,7 @@ public class AnalyzerRunner implements CommandLineRunner {
     private final CrudAnalyzer crudAnalyzer;
     private final EntityMutationAnalyzer entityMutationAnalyzer;
     private final FlowEngine flowEngine;
+    private final EntryPointBehaviorAnalyzer entryPointBehaviorAnalyzer;
     private final CircularDependencyAnalyzer circularDependencyAnalyzer;
     private final GodClassAnalyzer godClassAnalyzer;
     private final RepositoryBypassAnalyzer repositoryBypassAnalyzer;
@@ -118,6 +121,7 @@ public class AnalyzerRunner implements CommandLineRunner {
             CrudAnalyzer crudAnalyzer,
             EntityMutationAnalyzer entityMutationAnalyzer,
             FlowEngine flowEngine,
+            EntryPointBehaviorAnalyzer entryPointBehaviorAnalyzer,
             CircularDependencyAnalyzer circularDependencyAnalyzer,
             GodClassAnalyzer godClassAnalyzer,
             RepositoryBypassAnalyzer repositoryBypassAnalyzer,
@@ -147,6 +151,7 @@ public class AnalyzerRunner implements CommandLineRunner {
         this.crudAnalyzer = crudAnalyzer;
         this.entityMutationAnalyzer = entityMutationAnalyzer;
         this.flowEngine = flowEngine;
+        this.entryPointBehaviorAnalyzer = entryPointBehaviorAnalyzer;
         this.circularDependencyAnalyzer = circularDependencyAnalyzer;
         this.godClassAnalyzer = godClassAnalyzer;
         this.repositoryBypassAnalyzer = repositoryBypassAnalyzer;
@@ -428,6 +433,19 @@ public class AnalyzerRunner implements CommandLineRunner {
                 );
 
         // ======================================
+        // STEP 6c: ENTRY POINT BEHAVIOR MODEL
+        //
+        // Classifies each entry point as READ_ONLY or MUTATING
+        // from the flow FlowEngine already traced for it, and
+        // renders each flow as a Mermaid sequence diagram (see
+        // ReportExporter) - "what does calling this actually do"
+        // as behavior, not just structure.
+        // ======================================
+
+        List<EntryPointBehavior> entryPointBehaviors =
+                entryPointBehaviorAnalyzer.analyze(flows);
+
+        // ======================================
         // STEP 7: DEPENDENCIES + GRAPH
         // ======================================
 
@@ -524,7 +542,8 @@ public class AnalyzerRunner implements CommandLineRunner {
                         architectureFindings,
                         domainCycles,
                         domainBoundaries,
-                        persistenceFindings
+                        persistenceFindings,
+                        entryPointBehaviors
                 );
 
         try {
@@ -728,6 +747,28 @@ public class AnalyzerRunner implements CommandLineRunner {
                                 + " [" + entryPoint.getDomain() + "]"
                 )
         );
+
+        // ======================================
+        // PRINT: ENTRY POINT BEHAVIOR
+        // ======================================
+
+        System.out.println();
+        System.out.println("======================================");
+        System.out.println("        ENTRY POINT BEHAVIOR");
+        System.out.println("======================================");
+
+        entryPointBehaviors.forEach(behavior -> {
+
+            EntryPointInfo entryPoint = behavior.getEntryPoint();
+
+            System.out.println(
+                    entryPoint.getClassName()
+                            + "." + entryPoint.getMethodName()
+                            + " | " + behavior.getClassification()
+                            + " | writeOperations="
+                            + behavior.getWriteOperationCount()
+            );
+        });
 
         // ======================================
         // PRINT: METHOD CALL GRAPH

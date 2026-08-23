@@ -504,6 +504,60 @@ the threshold). Both findings appeared correctly in the console
 output, `report.json`, and the HTML report's new "Persistence
 Findings" table.
 
+## Behavior Model: read/write classification and sequence diagrams
+
+Every earlier phase modeled either static structure (dependencies,
+domains) or reachability (the Flow Engine's "what can this entry
+point reach"). Neither answers the more concrete question a
+reviewer actually asks about a specific endpoint: "if I call this,
+what does it actually *do*, and in what order?" Phase 7 answers
+both halves of that from data already collected - no new parsing.
+
+**`EntryPointBehaviorAnalyzer`** classifies each entry point as
+`READ_ONLY` or `MUTATING` by inspecting the `FlowPath` the Flow
+Engine already traced for it: any write-shaped database operation
+(`CREATE_OR_UPDATE`/`UPDATE`/`DELETE`) or entity field mutation
+anywhere in the reachable flow makes it `MUTATING`; otherwise
+`READ_ONLY`. This is meant to answer "is this safe to retry,
+cache, or call speculatively" - the kind of question that matters
+before treating an endpoint as idempotent.
+
+**Scope, explicitly**: `CUSTOM_QUERY` operations (a repository
+method `CrudAnalyzer` couldn't classify by name, e.g. a
+hand-written `@Query`-annotated method with an arbitrary name) are
+conservatively treated as writes. There's no way to know from the
+method name alone whether such a query reads or writes, and for a
+classification meant to answer "is this safe to treat as
+read-only," guessing `MUTATING` is the safe direction to be wrong
+in - some genuinely read-only custom queries will be
+over-classified as `MUTATING`, never the reverse. This inherits
+every limitation the Flow Engine itself already documents (the
+interface-vs-implementation call-graph boundary, the
+`MAX_VISITED_NODES` truncation safety net).
+
+**Sequence diagrams**: `ReportExporter` now also writes one
+Mermaid `sequenceDiagram` per entry point under
+`sequence-diagrams/*.mmd` - the dynamic counterpart to the static
+DOT/Mermaid dependency and domain graphs from Phase 5, showing
+the actual call *order* the Flow Engine traced (something an
+unordered edge list can't express). Same design choice as every
+other diagram in this tool: Mermaid source text, not a rendered
+image, pasted into a GitHub markdown fence or mermaid.live. One
+file per entry point rather than one combined file, since
+Mermaid's `sequenceDiagram` syntax describes exactly one diagram -
+a directory of small files is more useful than one large file
+nothing can render as a whole.
+
+Verified end-to-end against a hand-written sample project with two
+entry points sharing a domain: a read-only `GET` (correctly
+classified `READ_ONLY`, zero write operations) and a mutating
+`POST` calling `repository.save(...)` (correctly classified
+`MUTATING`, one write operation). Both sequence diagrams were
+inspected directly and correctly showed the controller → service →
+repository call order with the right method names; the HTML
+report's Entry Points table showed the matching behavior badges,
+and the new "Mutating entry points" stat card counted exactly one.
+
 ## Parallelization scope
 
 Only the first pass (parsing + per-class structural analysis)
