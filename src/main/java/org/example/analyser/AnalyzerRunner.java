@@ -17,6 +17,7 @@ import org.example.analyser.analyzer.DependencyGraphBuilder;
 import org.example.analyser.analyzer.DomainAnalyzer;
 import org.example.analyser.analyzer.DomainDependencyAnalyzer;
 import org.example.analyser.analyzer.EntityMutationAnalyzer;
+import org.example.analyser.analyzer.FlowEngine;
 import org.example.analyser.analyzer.InterfaceRoleResolver;
 import org.example.analyser.analyzer.MetaAnnotationResolver;
 import org.example.analyser.analyzer.MethodCallAnalyzer;
@@ -26,8 +27,6 @@ import org.example.analyser.analyzer.ReportExporter;
 import org.example.analyser.analyzer.RuntimeDependencyAnalyzer;
 import org.example.analyser.analyzer.SpringComponentAnalyzer;
 
-import org.example.analyser.model.ApiInfo;
-import org.example.analyser.model.BatchProgramInfo;
 import org.example.analyser.model.ClassCouplingInfo;
 import org.example.analyser.model.ClassInfo;
 import org.example.analyser.model.CrudOperationInfo;
@@ -36,6 +35,8 @@ import org.example.analyser.model.DependencyInfo;
 import org.example.analyser.model.DomainDependency;
 import org.example.analyser.model.DomainInfo;
 import org.example.analyser.model.EntityMutationInfo;
+import org.example.analyser.model.EntryPointInfo;
+import org.example.analyser.model.FlowPath;
 import org.example.analyser.model.MethodCallInfo;
 
 import org.example.analyser.parser.JavaSourceParser;
@@ -74,6 +75,7 @@ public class AnalyzerRunner implements CommandLineRunner {
     private final MethodCallAnalyzer methodCallAnalyzer;
     private final CrudAnalyzer crudAnalyzer;
     private final EntityMutationAnalyzer entityMutationAnalyzer;
+    private final FlowEngine flowEngine;
     private final ReportExporter reportExporter;
 
     public AnalyzerRunner(
@@ -95,6 +97,7 @@ public class AnalyzerRunner implements CommandLineRunner {
             MethodCallAnalyzer methodCallAnalyzer,
             CrudAnalyzer crudAnalyzer,
             EntityMutationAnalyzer entityMutationAnalyzer,
+            FlowEngine flowEngine,
             ReportExporter reportExporter) {
 
         this.projectScanner = projectScanner;
@@ -115,6 +118,7 @@ public class AnalyzerRunner implements CommandLineRunner {
         this.methodCallAnalyzer = methodCallAnalyzer;
         this.crudAnalyzer = crudAnalyzer;
         this.entityMutationAnalyzer = entityMutationAnalyzer;
+        this.flowEngine = flowEngine;
         this.reportExporter = reportExporter;
     }
 
@@ -253,18 +257,26 @@ public class AnalyzerRunner implements CommandLineRunner {
         interfaceRoleResolver.resolve(classes);
 
         // ======================================
-        // STEP 4: REST/GRAPHQL APIS + BATCH PROGRAMS
+        // STEP 4: ENTRY POINTS - REST/GRAPHQL APIS
+        // + BATCH/SCHEDULED/STARTUP PROGRAMS
+        //
+        // One unified list: ApiAnalyzer and BatchAnalyzer
+        // both answer "where does execution start", just for
+        // different trigger kinds. Keeping them as one list
+        // from here on (rather than two the flow engine, and
+        // every future consumer, would each have to know about
+        // and merge separately) is the whole point of
+        // EntryPointInfo.
         // ======================================
 
         PackageDomainExtractor domainExtractor =
                 PackageDomainExtractor.fit(classes);
 
-        List<ApiInfo> apis = new ArrayList<>();
-        List<BatchProgramInfo> batchPrograms = new ArrayList<>();
+        List<EntryPointInfo> entryPoints = new ArrayList<>();
 
         for (ParsedClass parsedClass : parsedClasses) {
 
-            batchPrograms.addAll(
+            entryPoints.addAll(
                     batchAnalyzer.analyze(
                             parsedClass.declaration(),
                             parsedClass.classInfo(),
@@ -275,7 +287,7 @@ public class AnalyzerRunner implements CommandLineRunner {
             if (parsedClass.declaration()
                     instanceof ClassOrInterfaceDeclaration coid) {
 
-                apis.addAll(
+                entryPoints.addAll(
                         apiAnalyzer.analyze(
                                 coid,
                                 parsedClass.classInfo(),
@@ -341,6 +353,25 @@ public class AnalyzerRunner implements CommandLineRunner {
                 crudAnalyzer.analyze(methodCalls, classes);
 
         // ======================================
+        // STEP 6b: ENTRY POINT FLOWS
+        //
+        // For each entry point, walk the method-call graph
+        // outward to find every database operation and entity
+        // mutation reachable from it - "when this API/job runs,
+        // what actually happens" instead of just the disconnected
+        // facts above. See FlowEngine for how the walk works and
+        // its documented limitations.
+        // ======================================
+
+        List<FlowPath> flows =
+                flowEngine.analyze(
+                        entryPoints,
+                        methodCalls,
+                        crudOperations,
+                        entityMutations
+                );
+
+        // ======================================
         // STEP 7: DEPENDENCIES + GRAPH
         // ======================================
 
@@ -380,11 +411,11 @@ public class AnalyzerRunner implements CommandLineRunner {
                         coupling,
                         domains,
                         domainDependencies,
-                        apis,
-                        batchPrograms,
+                        entryPoints,
                         methodCalls,
                         crudOperations,
-                        entityMutations
+                        entityMutations,
+                        flows
                 );
 
         try {
@@ -540,38 +571,23 @@ public class AnalyzerRunner implements CommandLineRunner {
         );
 
         // ======================================
-        // PRINT: API INVENTORY
+        // PRINT: ENTRY POINT INVENTORY
         // ======================================
 
         System.out.println();
         System.out.println("======================================");
-        System.out.println("            API INVENTORY");
+        System.out.println("        ENTRY POINT INVENTORY");
         System.out.println("======================================");
 
-        apis.forEach(api ->
+        entryPoints.forEach(entryPoint ->
                 System.out.println(
-                        api.getHttpMethod() + " " + api.getPath()
-                                + " -> " + api.getControllerClass()
-                                + "." + api.getMethodName()
-                                + " [" + api.getDomain() + "]"
-                )
-        );
-
-        // ======================================
-        // PRINT: BATCH PROGRAM INVENTORY
-        // ======================================
-
-        System.out.println();
-        System.out.println("======================================");
-        System.out.println("        BATCH PROGRAM INVENTORY");
-        System.out.println("======================================");
-
-        batchPrograms.forEach(batch ->
-                System.out.println(
-                        batch.getTrigger() + " "
-                                + batch.getClassName()
-                                + "." + batch.getMethodName()
-                                + " [" + batch.getDomain() + "]"
+                        entryPoint.getTriggerType()
+                                + (entryPoint.getPath() != null
+                                        ? " " + entryPoint.getPath()
+                                        : "")
+                                + " -> " + entryPoint.getClassName()
+                                + "." + entryPoint.getMethodName()
+                                + " [" + entryPoint.getDomain() + "]"
                 )
         );
 
@@ -630,6 +646,73 @@ public class AnalyzerRunner implements CommandLineRunner {
                                 + " | table=" + mutation.getTableName()
                 )
         );
+
+        // ======================================
+        // PRINT: ENTRY POINT FLOWS
+        // ======================================
+
+        System.out.println();
+        System.out.println("======================================");
+        System.out.println("         ENTRY POINT FLOWS");
+        System.out.println("======================================");
+
+        for (FlowPath flow : flows) {
+
+            EntryPointInfo entryPoint = flow.getEntryPoint();
+
+            System.out.println("--------------------------------------");
+            System.out.println(
+                    "ENTRY POINT: " + entryPoint.getTriggerType()
+                            + (entryPoint.getPath() != null
+                                    ? " " + entryPoint.getPath()
+                                    : "")
+                            + " -> " + entryPoint.getClassName()
+                            + "." + entryPoint.getMethodName()
+                            + " [" + entryPoint.getDomain() + "]"
+            );
+
+            System.out.println("CALLS:");
+            flow.getSteps().forEach(call ->
+                    System.out.println(
+                            "  " + call.getSourceClass()
+                                    + "." + call.getSourceMethod()
+                                    + " -> " + call.getTargetClass()
+                                    + "." + call.getTargetMethod()
+                    )
+            );
+
+            System.out.println("DATABASE OPERATIONS:");
+            flow.getDatabaseOperations().forEach(operation ->
+                    System.out.println(
+                            "  " + operation.getSourceClass()
+                                    + "." + operation.getSourceMethod()
+                                    + " -> " + operation.getRepositoryClass()
+                                    + "." + operation.getRepositoryMethod()
+                                    + " | " + operation.getOperation()
+                                    + " | table=" + operation.getTableName()
+                    )
+            );
+
+            System.out.println("ENTITY MUTATIONS:");
+            flow.getEntityMutations().forEach(mutation ->
+                    System.out.println(
+                            "  " + mutation.getSourceClass()
+                                    + "." + mutation.getSourceMethod()
+                                    + " -> " + mutation.getEntityClass()
+                                    + "." + mutation.getFieldName()
+                                    + " | " + mutation.getOperation()
+                                    + " | table=" + mutation.getTableName()
+                    )
+            );
+
+            if (flow.isTruncated()) {
+                System.out.println(
+                        "  (WARNING: flow truncated - reachable "
+                                + "call graph exceeded the safety "
+                                + "limit, results are incomplete)"
+                );
+            }
+        }
 
         System.out.println("--------------------------------------");
     }

@@ -1,8 +1,6 @@
 package org.example.analyser.analyzer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.example.analyser.model.ApiInfo;
-import org.example.analyser.model.BatchProgramInfo;
 import org.example.analyser.model.ClassCouplingInfo;
 import org.example.analyser.model.ClassInfo;
 import org.example.analyser.model.CrudOperationInfo;
@@ -11,6 +9,8 @@ import org.example.analyser.model.DependencyInfo;
 import org.example.analyser.model.DomainDependency;
 import org.example.analyser.model.DomainInfo;
 import org.example.analyser.model.EntityMutationInfo;
+import org.example.analyser.model.EntryPointInfo;
+import org.example.analyser.model.FlowPath;
 import org.example.analyser.model.MethodCallInfo;
 import org.springframework.stereotype.Component;
 
@@ -40,11 +40,11 @@ public class ReportExporter {
             List<ClassCouplingInfo> coupling,
             List<DomainInfo> domains,
             List<DomainDependency> domainDependencies,
-            List<ApiInfo> apis,
-            List<BatchProgramInfo> batchPrograms,
+            List<EntryPointInfo> entryPoints,
             List<MethodCallInfo> methodCalls,
             List<CrudOperationInfo> crudOperations,
-            List<EntityMutationInfo> entityMutations) {
+            List<EntityMutationInfo> entityMutations,
+            List<FlowPath> flows) {
     }
 
     public void export(

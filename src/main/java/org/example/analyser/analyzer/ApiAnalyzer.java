@@ -4,8 +4,8 @@ import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.expr.AnnotationExpr;
 import com.github.javaparser.ast.expr.MemberValuePair;
-import org.example.analyser.model.ApiInfo;
 import org.example.analyser.model.ClassInfo;
+import org.example.analyser.model.EntryPointInfo;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -16,13 +16,13 @@ import java.util.Optional;
 @Component
 public class ApiAnalyzer {
 
-    public List<ApiInfo> analyze(
+    public List<EntryPointInfo> analyze(
             ClassOrInterfaceDeclaration clazz,
             ClassInfo classInfo,
             Map<String, ClassOrInterfaceDeclaration> declarationsByName,
             PackageDomainExtractor domainExtractor) {
 
-        List<ApiInfo> apis = new ArrayList<>();
+        List<EntryPointInfo> apis = new ArrayList<>();
 
         /*
          * Analyze REST controllers and plain MVC/GraphQL
@@ -61,8 +61,8 @@ public class ApiAnalyzer {
                         )
                                 : mapping.path();
 
-                ApiInfo api =
-                        new ApiInfo(
+                EntryPointInfo api =
+                        new EntryPointInfo(
                                 classInfo.getName(),
                                 classInfo.getPackageName(),
                                 method.getNameAsString(),

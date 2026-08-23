@@ -2,8 +2,8 @@ package org.example.analyser.analyzer;
 
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.TypeDeclaration;
-import org.example.analyser.model.BatchProgramInfo;
 import org.example.analyser.model.ClassInfo;
+import org.example.analyser.model.EntryPointInfo;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -69,12 +69,12 @@ public class BatchAnalyzer {
                     "ApplicationRunner"
             );
 
-    public List<BatchProgramInfo> analyze(
+    public List<EntryPointInfo> analyze(
             TypeDeclaration<?> clazz,
             ClassInfo classInfo,
             PackageDomainExtractor domainExtractor) {
 
-        List<BatchProgramInfo> results =
+        List<EntryPointInfo> results =
                 new ArrayList<>();
 
         String domain =
@@ -90,11 +90,12 @@ public class BatchAnalyzer {
         if (implementsBatchInterface) {
 
             results.add(
-                    new BatchProgramInfo(
+                    new EntryPointInfo(
                             classInfo.getName(),
                             classInfo.getPackageName(),
                             "execute",
                             "SPRING_BATCH_STEP_COMPONENT",
+                            null,
                             domain
                     )
             );
@@ -108,11 +109,12 @@ public class BatchAnalyzer {
         if (isStartupRunner) {
 
             results.add(
-                    new BatchProgramInfo(
+                    new EntryPointInfo(
                             classInfo.getName(),
                             classInfo.getPackageName(),
                             "run",
                             "STARTUP_RUNNER",
+                            null,
                             domain
                     )
             );
@@ -127,11 +129,12 @@ public class BatchAnalyzer {
                 .filter(method -> !isSpringBootApplicationEntryPoint)
                 .forEach(method ->
                         results.add(
-                                new BatchProgramInfo(
+                                new EntryPointInfo(
                                         classInfo.getName(),
                                         classInfo.getPackageName(),
                                         method.getNameAsString(),
                                         "MAIN_ENTRY_POINT",
+                                        null,
                                         domain
                                 )
                         )
@@ -145,11 +148,12 @@ public class BatchAnalyzer {
                     .filter(TRIGGER_ANNOTATIONS::contains)
                     .forEach(trigger ->
                             results.add(
-                                    new BatchProgramInfo(
+                                    new EntryPointInfo(
                                             classInfo.getName(),
                                             classInfo.getPackageName(),
                                             method.getNameAsString(),
                                             trigger.toUpperCase(),
+                                            null,
                                             domain
                                     )
                             )
