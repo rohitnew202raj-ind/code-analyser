@@ -6,6 +6,7 @@ import org.example.analyser.model.EntityMutationInfo;
 import org.example.analyser.model.EntryPointBehavior;
 import org.example.analyser.model.EntryPointInfo;
 import org.example.analyser.model.FlowPath;
+import org.example.analyser.model.TriggerType;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -107,7 +108,7 @@ class EntryPointBehaviorAnalyzerTest {
 
         EntryPointInfo entryPoint = new EntryPointInfo(
                 "OrderController", "com.acme.order", "create",
-                "POST", "/orders", "order"
+                TriggerType.POST, "/orders", "order"
         );
 
         return new FlowPath(

@@ -4,10 +4,13 @@ import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.TypeDeclaration;
 import org.example.analyser.model.ClassInfo;
 import org.example.analyser.model.EntryPointInfo;
+import org.example.analyser.model.TriggerType;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -41,18 +44,26 @@ import java.util.Set;
  * following builder-style fluent method chains
  * (.get("step1").tasklet(...).build()), which is a data-flow
  * analysis problem, not a per-node AST check.
+ *
+ * Each trigger annotation maps to its own {@link TriggerType}
+ * constant (KAFKA_CONSUMER, JMS_CONSUMER, RABBIT_CONSUMER,
+ * EVENT_LISTENER, ...) rather than one generic "batch" label -
+ * these are genuinely different execution models with different
+ * retry/ordering/idempotency implications, even though they were
+ * all treated as one thing earlier in this tool's history. See
+ * LIMITATIONS.md.
  */
 @Component
 public class BatchAnalyzer {
 
-    private static final Set<String> TRIGGER_ANNOTATIONS =
-            Set.of(
-                    "Scheduled",
-                    "Async",
-                    "EventListener",
-                    "KafkaListener",
-                    "JmsListener",
-                    "RabbitListener"
+    private static final Map<String, TriggerType> TRIGGER_ANNOTATIONS =
+            Map.of(
+                    "Scheduled", TriggerType.SCHEDULED,
+                    "Async", TriggerType.ASYNC,
+                    "EventListener", TriggerType.EVENT_LISTENER,
+                    "KafkaListener", TriggerType.KAFKA_CONSUMER,
+                    "JmsListener", TriggerType.JMS_CONSUMER,
+                    "RabbitListener", TriggerType.RABBIT_CONSUMER
             );
 
     private static final Set<String> BATCH_INTERFACES =
@@ -94,7 +105,7 @@ public class BatchAnalyzer {
                             classInfo.getName(),
                             classInfo.getPackageName(),
                             "execute",
-                            "SPRING_BATCH_STEP_COMPONENT",
+                            TriggerType.SPRING_BATCH_STEP_COMPONENT,
                             null,
                             domain
                     )
@@ -113,7 +124,7 @@ public class BatchAnalyzer {
                             classInfo.getName(),
                             classInfo.getPackageName(),
                             "run",
-                            "STARTUP_RUNNER",
+                            TriggerType.STARTUP_RUNNER,
                             null,
                             domain
                     )
@@ -133,7 +144,7 @@ public class BatchAnalyzer {
                                         classInfo.getName(),
                                         classInfo.getPackageName(),
                                         method.getNameAsString(),
-                                        "MAIN_ENTRY_POINT",
+                                        TriggerType.MAIN_ENTRY_POINT,
                                         null,
                                         domain
                                 )
@@ -145,14 +156,15 @@ public class BatchAnalyzer {
             method.getAnnotations()
                     .stream()
                     .map(AnnotationNames::simpleName)
-                    .filter(TRIGGER_ANNOTATIONS::contains)
+                    .map(TRIGGER_ANNOTATIONS::get)
+                    .filter(Objects::nonNull)
                     .forEach(trigger ->
                             results.add(
                                     new EntryPointInfo(
                                             classInfo.getName(),
                                             classInfo.getPackageName(),
                                             method.getNameAsString(),
-                                            trigger.toUpperCase(),
+                                            trigger,
                                             null,
                                             domain
                                     )

@@ -6,6 +6,7 @@ import com.github.javaparser.ast.expr.AnnotationExpr;
 import com.github.javaparser.ast.expr.MemberValuePair;
 import org.example.analyser.model.ClassInfo;
 import org.example.analyser.model.EntryPointInfo;
+import org.example.analyser.model.TriggerType;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -202,7 +203,7 @@ public class ApiAnalyzer {
                 case "GetMapping":
                     mappings.add(
                             new ApiMapping(
-                                    "GET",
+                                    TriggerType.GET,
                                     extractPath(
                                             annotation
                                     ).orElse(""),
@@ -214,7 +215,7 @@ public class ApiAnalyzer {
                 case "PostMapping":
                     mappings.add(
                             new ApiMapping(
-                                    "POST",
+                                    TriggerType.POST,
                                     extractPath(
                                             annotation
                                     ).orElse(""),
@@ -226,7 +227,7 @@ public class ApiAnalyzer {
                 case "PutMapping":
                     mappings.add(
                             new ApiMapping(
-                                    "PUT",
+                                    TriggerType.PUT,
                                     extractPath(
                                             annotation
                                     ).orElse(""),
@@ -238,7 +239,7 @@ public class ApiAnalyzer {
                 case "PatchMapping":
                     mappings.add(
                             new ApiMapping(
-                                    "PATCH",
+                                    TriggerType.PATCH,
                                     extractPath(
                                             annotation
                                     ).orElse(""),
@@ -250,7 +251,7 @@ public class ApiAnalyzer {
                 case "DeleteMapping":
                     mappings.add(
                             new ApiMapping(
-                                    "DELETE",
+                                    TriggerType.DELETE,
                                     extractPath(
                                             annotation
                                     ).orElse(""),
@@ -271,7 +272,7 @@ public class ApiAnalyzer {
                 case "QueryMapping":
                     mappings.add(
                             graphQlMapping(
-                                    "GRAPHQL_QUERY",
+                                    TriggerType.GRAPHQL_QUERY,
                                     annotation,
                                     method
                             )
@@ -281,7 +282,7 @@ public class ApiAnalyzer {
                 case "MutationMapping":
                     mappings.add(
                             graphQlMapping(
-                                    "GRAPHQL_MUTATION",
+                                    TriggerType.GRAPHQL_MUTATION,
                                     annotation,
                                     method
                             )
@@ -291,7 +292,7 @@ public class ApiAnalyzer {
                 case "SubscriptionMapping":
                     mappings.add(
                             graphQlMapping(
-                                    "GRAPHQL_SUBSCRIPTION",
+                                    TriggerType.GRAPHQL_SUBSCRIPTION,
                                     annotation,
                                     method
                             )
@@ -301,7 +302,7 @@ public class ApiAnalyzer {
                 case "SchemaMapping":
                     mappings.add(
                             graphQlMapping(
-                                    "GRAPHQL_SCHEMA_MAPPING",
+                                    TriggerType.GRAPHQL_SCHEMA_MAPPING,
                                     annotation,
                                     method
                             )
@@ -329,7 +330,7 @@ public class ApiAnalyzer {
      * itself is tagged (see SpringComponentAnalyzer).
      */
     private ApiMapping graphQlMapping(
-            String kind,
+            TriggerType kind,
             AnnotationExpr annotation,
             MethodDeclaration method) {
 
@@ -364,7 +365,7 @@ public class ApiAnalyzer {
         if (!annotation.isNormalAnnotationExpr()) {
 
             mappings.add(
-                    new ApiMapping("ANY", path, true)
+                    new ApiMapping(TriggerType.ANY, path, true)
             );
 
             return mappings;
@@ -385,7 +386,7 @@ public class ApiAnalyzer {
         if (methodPair.isEmpty()) {
 
             mappings.add(
-                    new ApiMapping("ANY", path, true)
+                    new ApiMapping(TriggerType.ANY, path, true)
             );
 
             return mappings;
@@ -398,31 +399,31 @@ public class ApiAnalyzer {
 
         if (value.contains("GET")) {
             mappings.add(
-                    new ApiMapping("GET", path, true)
+                    new ApiMapping(TriggerType.GET, path, true)
             );
         }
 
         if (value.contains("POST")) {
             mappings.add(
-                    new ApiMapping("POST", path, true)
+                    new ApiMapping(TriggerType.POST, path, true)
             );
         }
 
         if (value.contains("PUT")) {
             mappings.add(
-                    new ApiMapping("PUT", path, true)
+                    new ApiMapping(TriggerType.PUT, path, true)
             );
         }
 
         if (value.contains("PATCH")) {
             mappings.add(
-                    new ApiMapping("PATCH", path, true)
+                    new ApiMapping(TriggerType.PATCH, path, true)
             );
         }
 
         if (value.contains("DELETE")) {
             mappings.add(
-                    new ApiMapping("DELETE", path, true)
+                    new ApiMapping(TriggerType.DELETE, path, true)
             );
         }
 
@@ -542,7 +543,7 @@ public class ApiAnalyzer {
     // ==========================================
 
     private record ApiMapping(
-            String httpMethod,
+            TriggerType httpMethod,
             String path,
             boolean isPathBased) {
     }

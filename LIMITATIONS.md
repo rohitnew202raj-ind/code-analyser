@@ -649,6 +649,37 @@ data-flow analysis (tracing where an object came from across
 statements), not a single-call-site check, and deserves its own
 phase rather than a guess bolted onto this one.
 
+## Entry point trigger type is now a real enum
+
+`EntryPointInfo.triggerType` was a raw `String`, populated by
+`ApiAnalyzer` and `BatchAnalyzer` independently with whatever
+literal each happened to write. In practice the two analyzers
+already emitted genuinely distinct values per trigger kind - REST
+verbs (`GET`/`POST`/...), GraphQL operation kinds, and separate
+labels per batch/event annotation - so trigger kinds were *not*
+actually being collapsed into one generic "batch" bucket the way
+an early read of this code might suggest. What was real: two of
+those labels (`EVENTLISTENER`, `KAFKALISTENER`, and their
+siblings for JMS/Rabbit) were built by uppercasing an annotation's
+simple name with no separator, an accident of implementation
+rather than a deliberate naming choice, and nothing enforced that
+every analyzer's trigger label actually matched anything - a typo
+in a new analyzer's string literal would silently produce a
+trigger type nothing else recognized.
+
+`TriggerType` makes every execution model explicit as an enum:
+REST verbs, GraphQL operation kinds, and - now cleanly named -
+`SCHEDULED`, `ASYNC`, `EVENT_LISTENER`, `KAFKA_CONSUMER`,
+`JMS_CONSUMER`, `RABBIT_CONSUMER`, `SPRING_BATCH_STEP_COMPONENT`,
+`STARTUP_RUNNER`, and `MAIN_ENTRY_POINT`. `report.json`'s shape is
+unchanged - Jackson serializes an enum to its constant name by
+default, the same string that was there before (just spelled
+correctly and consistently now). `BatchAnalyzer` had zero test
+coverage for its six annotation-driven triggers before this
+change (only the interface-based and `main()`-based paths were
+tested); added a single test asserting all six map to their
+correct, distinct `TriggerType`.
+
 ## Parallelization scope
 
 Only the first pass (parsing + per-class structural analysis)

@@ -5,6 +5,7 @@ import org.example.analyser.model.ArchitectureFindingType;
 import org.example.analyser.model.ClassCouplingInfo;
 import org.example.analyser.model.ClassInfo;
 import org.example.analyser.model.EntryPointInfo;
+import org.example.analyser.model.TriggerType;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -88,7 +89,7 @@ class DeadComponentAnalyzerTest {
 
         EntryPointInfo entryPoint = new EntryPointInfo(
                 "OrderAsyncEventListener", "com.acme", "onCreatedAsync",
-                "EVENTLISTENER", null, "order"
+                TriggerType.EVENT_LISTENER, null, "order"
         );
 
         List<ArchitectureFinding> findings =

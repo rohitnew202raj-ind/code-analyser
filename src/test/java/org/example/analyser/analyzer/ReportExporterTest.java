@@ -18,6 +18,7 @@ import org.example.analyser.model.FlowPath;
 import org.example.analyser.model.MethodCallInfo;
 import org.example.analyser.model.PersistenceFinding;
 import org.example.analyser.model.PersistenceFindingType;
+import org.example.analyser.model.TriggerType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -221,7 +222,7 @@ class ReportExporterTest {
 
         EntryPointInfo entryPoint = new EntryPointInfo(
                 "OrderController", "com.acme.order", "create",
-                "POST", "/orders", "order"
+                TriggerType.POST, "/orders", "order"
         );
 
         ArchitectureFinding finding = new ArchitectureFinding(

@@ -722,7 +722,7 @@ public class ReportExporter {
                             : null;
 
             html.append("<tr><td>")
-                    .append(htmlEscape(entryPoint.getTriggerType()))
+                    .append(htmlEscape(entryPoint.getTriggerType().name()))
                     .append("</td><td>")
                     .append(
                             entryPoint.getPath() != null
