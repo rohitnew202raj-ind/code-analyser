@@ -720,6 +720,47 @@ matching the `*Exception` name suffix). `SpringComponentAnalyzer`
 now distinguishes these per-class rather than reporting every
 repository or exception as equally confirmed.
 
+## Spring bean resolution: only @Primary, never a guess
+
+`BeanResolutionAnalyzer` answers a question nothing earlier in
+this tool addressed: when an interface has multiple Spring-managed
+implementations, which one actually gets wired when code
+`@Autowire`s it? Silent multi-implementation ambiguity was
+previously invisible - the dependency graph and call graph both
+already record edges against the *interface*, never a specific
+implementation (a pre-existing limitation `FlowEngine` documents),
+so there was no signal anywhere that an interface even had more
+than one candidate.
+
+**Deliberately, only `@Primary` is used to resolve ambiguity** -
+it's the one Spring bean-selection mechanism that's a static fact
+about the implementation class itself, true regardless of how or
+where the interface gets injected. `@Qualifier` and Spring
+profiles are explicitly **not** used to eliminate candidates:
+
+- `@Qualifier` disambiguates at each individual injection site (a
+  specific field/parameter), not at the interface level - the
+  same interface can resolve differently at two different call
+  sites in the same codebase. Modeling that needs per-injection-
+  site analysis, a larger feature than this pass attempts.
+- Which Spring profile is active is a deployment-time decision
+  this static analysis has no way to know. Eliminating a
+  `@Profile`-restricted candidate would be guessing how the
+  application is actually run, not reading a fact from the
+  source - so every profile-restricted candidate stays a
+  candidate, with its profile surfaced in the description as
+  context rather than used to narrow anything down.
+
+**Also not modeled**: `@Bean`-annotated factory methods inside
+`@Configuration` classes (only class-level `implements` plus
+class-level stereotype annotations are read), and `@Conditional`
+variants beyond `@Profile`. Only implementations already
+classified `SERVICE`/`REPOSITORY`/`COMPONENT` (confirmed
+Spring-managed candidates) count - a class that merely implements
+an interface without carrying a stereotype of its own (a test
+double, a manually-instantiated helper) is excluded, since it
+isn't a bean Spring would ever actually choose between.
+
 ## Parallelization scope
 
 Only the first pass (parsing + per-class structural analysis)

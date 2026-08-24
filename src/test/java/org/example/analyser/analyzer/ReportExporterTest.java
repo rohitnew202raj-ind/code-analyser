@@ -2,6 +2,8 @@ package org.example.analyser.analyzer;
 
 import org.example.analyser.model.ArchitectureFinding;
 import org.example.analyser.model.ArchitectureFindingType;
+import org.example.analyser.model.BeanResolution;
+import org.example.analyser.model.BeanResolutionVerdict;
 import org.example.analyser.model.BehaviorClassification;
 import org.example.analyser.model.ClassInfo;
 import org.example.analyser.model.DependencyGraph;
@@ -99,7 +101,8 @@ class ReportExporterTest {
             ReportExporter.AnalysisReport report = new ReportExporter.AnalysisReport(
                     List.of(), List.of(), List.of(), List.of(), List.of(),
                     List.of(), List.of(), List.of(), List.of(), List.of(),
-                    List.of(finding), List.of(), List.of(), List.of(), List.of()
+                    List.of(finding), List.of(), List.of(), List.of(), List.of(),
+                    List.of()
             );
 
             reportExporter.export(
@@ -195,6 +198,23 @@ class ReportExporterTest {
         assertThat(html).contains("MUTATING");
     }
 
+    @Test
+    void htmlReportListsBeanResolutions(
+            @TempDir Path outputDirectory) throws Exception {
+
+        reportExporter.export(
+                outputDirectory, minimalReport(), minimalGraph()
+        );
+
+        String html = Files.readString(
+                outputDirectory.resolve("report.html")
+        );
+
+        assertThat(html).contains("PaymentGateway");
+        assertThat(html).contains("badge-ambiguous");
+        assertThat(html).contains("StripePaymentGateway");
+    }
+
     private DependencyGraph minimalGraph() {
 
         ClassInfo controller = new ClassInfo();
@@ -256,6 +276,15 @@ class ReportExporterTest {
                 entryPoint, BehaviorClassification.MUTATING, 1
         );
 
+        BeanResolution beanResolution = new BeanResolution(
+                "PaymentGateway",
+                List.of("StripePaymentGateway", "PaypalPaymentGateway"),
+                BeanResolutionVerdict.AMBIGUOUS,
+                null,
+                "PaymentGateway has 2 implementations with no single "
+                        + "@Primary (StripePaymentGateway, PaypalPaymentGateway)"
+        );
+
         return new ReportExporter.AnalysisReport(
                 List.of(),
                 List.of(),
@@ -271,7 +300,8 @@ class ReportExporterTest {
                 List.<DomainCycle>of(),
                 List.of(boundary),
                 List.of(persistenceFinding),
-                List.of(behavior)
+                List.of(behavior),
+                List.of(beanResolution)
         );
     }
 }

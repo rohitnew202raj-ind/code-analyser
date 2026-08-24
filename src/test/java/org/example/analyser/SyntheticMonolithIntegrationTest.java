@@ -188,6 +188,13 @@ class SyntheticMonolithIntegrationTest {
     }
 
     @Test
+    void findsBothBeanResolutionVerdicts() {
+
+        assertThat(fieldValues(report.get("beanResolutions"), "verdict"))
+                .contains("RESOLVED_BY_PRIMARY", "AMBIGUOUS");
+    }
+
+    @Test
     void classifiesBothReadOnlyAndMutatingEntryPoints() {
 
         assertThat(fieldValues(report.get("entryPointBehaviors"), "classification"))

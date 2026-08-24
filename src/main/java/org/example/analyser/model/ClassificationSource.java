@@ -47,5 +47,17 @@ public enum ClassificationSource {
      * wrong. Distinct from NAMING_HEURISTIC because no heuristic
      * actually fired here.
      */
-    NONE
+    NONE,
+
+    /**
+     * An interface with no stereotype of its own, classified by
+     * {@code InterfaceRoleResolver} from its implementing
+     * class(es) all agreeing on the same role - the "program to
+     * an interface" pattern, where only the implementation
+     * carries {@code @Service}/{@code @Repository}. High
+     * confidence (every implementor agreed), but a distinct kind
+     * of evidence from directly reading the class's own
+     * annotations.
+     */
+    PROPAGATED_FROM_IMPLEMENTATION
 }
