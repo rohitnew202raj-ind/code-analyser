@@ -399,6 +399,51 @@ actually *for*. Verified end-to-end against a hand-written sample
 covering all three verdicts (`EXTRACTION_CANDIDATE`, `TANGLED`,
 `BLOCKED_BY_CYCLE`) at once.
 
+## Package domain extraction: wrapper packages that hide real layers
+
+`PackageDomainExtractor` (used by `DomainAnalyzer`) derives the
+"domain" segment from the data itself: the longest package prefix
+shared by every scanned class, plus the segment right after it.
+That adapts to whatever convention a target project actually uses,
+but it has a specific failure mode worth documenting: a project
+that wraps several real technical layers in one extra "grouping"
+package that isn't itself a domain - `com.acme.core.service.X`,
+`com.acme.core.repository.X`, `com.acme.core.dto.X` - used to
+collapse all three into a single `core` domain, hiding that
+they're different layers rather than one blob. This is exactly
+the shape a Spring project gets when everything lives under a
+`core` (or `common`/`base`/`internal`/`shared`/`impl`) package one
+level below the application root, which turned up in a real
+project a user pointed at this tool.
+
+The fix: `domainOf` now skips a wrapper-named segment (from that
+small fixed word list) and uses the segment beneath it instead -
+**but only when no scanned class's package name is exactly that
+wrapper segment**. `PackageDomainExtractor.fit` also records the
+exact set of package names actually in use, so it can tell "core
+is a pass-through with nothing living directly in it" apart from
+"core is a real, flat, terminal domain with classes directly in
+it" (the `common` package in this project's own
+`synthetic-monolith` test fixture is exactly the latter - it's
+flat, low-coupling, and a legitimate domain, not a wrapper). Only
+the former gets skipped. This distinction was found the hard way:
+a first pass at the fix used a blind word-list skip with no such
+guard, and the full test suite (not the new targeted tests alone)
+caught it silently swallowing the `common` domain in
+`SyntheticMonolithIntegrationTest`.
+
+What this does **not** solve: a project with no business-domain
+segment anywhere in its package names, at any depth (pure
+layered/technical packaging with no wrapper package either), still
+has no domain signal to recover - the best this class can honestly
+do there is surface the technical layer names themselves. There is
+no fully general way to infer "domain" from package names alone
+without project-specific configuration; this fix only prevents one
+specific, previously-undocumented data-loss pattern (multiple real
+layers silently merging into one bucket because of an intervening
+wrapper package), not the broader "layered packaging carries no
+domain signal" limitation already noted above.
+
 ## Export upgrade: Mermaid and HTML report
 
 `ReportExporter` now writes two additional formats alongside the
