@@ -5,6 +5,7 @@ import com.github.javaparser.ParserConfiguration;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.symbolsolver.JavaSymbolSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver;
+import com.github.javaparser.symbolsolver.resolution.typesolvers.JarTypeSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.JavaParserTypeSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.ReflectionTypeSolver;
 import org.springframework.stereotype.Component;
@@ -21,19 +22,24 @@ public class JavaSourceParser {
 
     /**
      * Wires up the Symbol Solver against the target project's
-     * own detected source roots plus the JDK. Must be called
-     * once, before any parse() calls, for calculateResolvedType()
-     * / resolve() to work anywhere downstream.
+     * own detected source roots, its resolved dependency jars
+     * (see {@link org.example.analyser.scanner.MavenDependencyResolver}),
+     * and the JDK. Must be called once, before any parse() calls,
+     * for calculateResolvedType() / resolve() to work anywhere
+     * downstream.
      *
-     * LIMITATION (documented): only the target project's own
-     * source and the JDK (via reflection) are resolvable.
-     * External framework/library types (Spring, JPA, etc.)
-     * are not on this classpath, so resolution naturally fails
-     * for those - callers are expected to fall back to
-     * AST-based heuristics when resolution fails, not to
-     * assume it always succeeds.
+     * LIMITATION (documented): {@code dependencyJars} is only
+     * ever populated for Maven target projects whose dependencies
+     * are already present in the local repository cache - for a
+     * Gradle project, or a Maven project that's never been built
+     * in this environment, this list is empty and resolution
+     * falls back to source+JDK only, exactly as before. A jar
+     * that fails to load (corrupt, unreadable) is skipped rather
+     * than aborting solver setup entirely.
      */
-    public void configureSymbolSolver(List<Path> sourceRoots) {
+    public void configureSymbolSolver(
+            List<Path> sourceRoots,
+            List<Path> dependencyJars) {
 
         CombinedTypeSolver combinedTypeSolver =
                 new CombinedTypeSolver();
@@ -47,6 +53,20 @@ public class JavaSourceParser {
                 combinedTypeSolver.add(
                         new JavaParserTypeSolver(sourceRoot)
                 );
+            }
+        }
+
+        for (Path dependencyJar : dependencyJars) {
+
+            try {
+
+                combinedTypeSolver.add(
+                        new JarTypeSolver(dependencyJar)
+                );
+
+            } catch (IOException unreadableJar) {
+                // Skip this one jar rather than aborting solver
+                // setup for the whole run.
             }
         }
 
