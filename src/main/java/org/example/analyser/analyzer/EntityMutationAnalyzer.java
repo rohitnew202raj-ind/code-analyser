@@ -4,6 +4,7 @@ import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
 import org.example.analyser.model.ClassInfo;
+import org.example.analyser.model.CrudOperationInfo;
 import org.example.analyser.model.EntityMutationInfo;
 import org.springframework.stereotype.Component;
 
@@ -11,6 +12,30 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * Finds setter calls on entity-typed objects - {@code order.setStatus(x)}
+ * - and records them as {@link EntityMutationInfo}.
+ *
+ * SCOPE (documented, not a bug): a setter call only proves the
+ * object changed *in memory*. Whether that change ever reaches
+ * the database depends on things this analyzer does not attempt
+ * to confirm - whether the object is actually a JPA-managed
+ * entity (loaded via a repository/EntityManager, not just {@code
+ * new Order()}), whether it's inside a transaction, and whether a
+ * subsequent {@code repository.save(...)}/{@code
+ * EntityManager.merge(...)} or JPA dirty-checking at commit time
+ * actually persists it. That's why the recorded operation is
+ * {@code "FIELD_MUTATION"}, not {@code "UPDATE"} - "UPDATE" is
+ * {@link CrudAnalyzer}'s vocabulary for a call that is actually a
+ * repository write, and using it here would claim a confirmed
+ * database write this analyzer has no way to confirm. Callers
+ * that want to reason about "did this entry point definitely
+ * write to the database" should look at {@link CrudOperationInfo}
+ * instead; callers reasoning conservatively about "could this
+ * entry point plausibly write something" (e.g. {@link
+ * EntryPointBehaviorAnalyzer}) are the intended consumer of this
+ * signal.
+ */
 @Component
 public class EntityMutationAnalyzer {
 
@@ -155,6 +180,11 @@ public class EntityMutationAnalyzer {
 
                     // ==================================
                     // CREATE MUTATION
+                    //
+                    // "FIELD_MUTATION", not "UPDATE": this is
+                    // an in-memory field change, not a
+                    // confirmed database write - see class
+                    // javadoc.
                     // ==================================
 
                     mutations.add(
@@ -163,7 +193,7 @@ public class EntityMutationAnalyzer {
                                     method.getNameAsString(),
                                     entity.getName(),
                                     fieldName,
-                                    "UPDATE",
+                                    "FIELD_MUTATION",
                                     tableName
                             )
                     );

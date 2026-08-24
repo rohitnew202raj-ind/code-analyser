@@ -28,6 +28,14 @@ import java.util.Set;
  * direction; guessing MUTATING is not. This means some genuinely
  * read-only custom queries will be classified MUTATING - a false
  * positive in the conservative direction, not a false negative.
+ *
+ * The same conservative direction applies to entity mutations: an
+ * {@link EntityMutationAnalyzer}-recorded field mutation is an
+ * in-memory change, not a confirmed database write on its own
+ * (see that class's javadoc) - but for the same "is this safe to
+ * treat as read-only" question, treating any reachable field
+ * mutation as MUTATING is the safe way to be wrong, not the
+ * unsafe one.
  */
 @Component
 public class EntryPointBehaviorAnalyzer {

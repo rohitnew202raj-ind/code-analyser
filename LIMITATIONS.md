@@ -611,6 +611,44 @@ phase hand verification (building the jar, running it against a
 purpose-built sample, reading the actual output) that still
 happens for whatever a *new* phase adds.
 
+## Entity mutations are in-memory changes, not confirmed database writes
+
+`EntityMutationAnalyzer` previously recorded every setter call
+(`order.setStatus(x)`) with `operation = "UPDATE"` - the same word
+`CrudAnalyzer` uses for an actual repository write. That
+conflated two different things: a setter call only proves an
+object changed *in memory*. Whether it ever reaches the database
+depends on facts this analyzer has no way to confirm - whether
+the object is a JPA-managed entity at all (`new Order()` never
+gets persisted just because a setter was called on it, versus an
+entity loaded via a repository/`EntityManager`), whether the call
+happens inside a transaction, and whether a subsequent
+`repository.save(...)`/`EntityManager.merge(...)` or JPA
+dirty-checking at commit time actually writes it.
+
+The recorded operation is now `"FIELD_MUTATION"`, a distinct
+vocabulary from `CrudOperationInfo`'s `CREATE_OR_UPDATE`/`READ`/
+`UPDATE`/`DELETE`/`CUSTOM_QUERY`/`FLUSH`, so the two can no longer
+be confused downstream. This does not change any analyzer's
+*behavior* - `EntryPointBehaviorAnalyzer` already only checked
+whether the entity-mutations list was non-empty, never the
+operation string on it, so this was a mislabeling bug, not a
+detection bug. It matters because `report.json` is meant to be
+read and trusted directly (that's the whole point of Phase 5's
+export upgrade); a field that says `"UPDATE"` when no database
+write was ever confirmed is misleading on its own, independent of
+whether any analyzer's logic happened to look at it.
+
+**Not attempted here** (a real, larger follow-up, not folded into
+this fix): actually confirming persistence - tracking whether the
+mutated object was constructed fresh (`new Order()`, never
+persisted) versus loaded from a repository (a JPA-managed entity,
+where dirty checking will actually write the change), and whether
+a `@Transactional` boundary is in scope. That requires real
+data-flow analysis (tracing where an object came from across
+statements), not a single-call-site check, and deserves its own
+phase rather than a guess bolted onto this one.
+
 ## Parallelization scope
 
 Only the first pass (parsing + per-class structural analysis)
