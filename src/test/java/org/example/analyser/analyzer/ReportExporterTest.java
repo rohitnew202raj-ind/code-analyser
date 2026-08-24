@@ -27,6 +27,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -127,7 +128,7 @@ class ReportExporterTest {
                     List.of(), List.of(), List.of(), List.of(), List.of(),
                     List.of(), List.of(), List.of(), List.of(), List.of(),
                     List.of(finding), List.of(), List.of(), List.of(), List.of(),
-                    List.of()
+                    List.of(), "package-based", Map.of()
             );
 
             reportExporter.export(
@@ -326,7 +327,9 @@ class ReportExporterTest {
                 List.of(boundary),
                 List.of(persistenceFinding),
                 List.of(behavior),
-                List.of(beanResolution)
+                List.of(beanResolution),
+                "package-based",
+                Map.of("package-based", 1.0, "class-name", 0.0, "entity-usage", 0.0)
         );
     }
 }
