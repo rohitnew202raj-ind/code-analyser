@@ -298,21 +298,22 @@ boundaries rather than introducing new ones.
 The one worth calling out explicitly: when a field is declared
 by interface type (`private OrderService orderService`, the
 standard Spring pattern) and a call into it resolves to the
-interface rather than the implementing class, the walk dead-ends
-at that node. The implementation's own outgoing calls are
-recorded under the implementation class's name
-(`OrderServiceImpl.create -> ...`), not the interface's
-(`OrderService.create`), so `FlowEngine` never finds them -
-there's no data connecting the two under this representation.
-A flow that looks short at the interface boundary is
-indistinguishable from a real short flow; both are represented
-identically (no further edges found) rather than guessed at.
-Closing this gap would mean giving the call graph itself
-interface-to-implementation awareness (the same kind of
-resolution `InterfaceRoleResolver` already does for
-classification, just for call edges instead of dependency
-edges) - a real, valuable follow-up, deliberately out of scope
-here.
+interface rather than the implementing class, the interface node
+itself still has no outgoing calls of its own - the
+implementation's calls are recorded under the implementation
+class's name (`OrderServiceImpl.create -> ...`), not the
+interface's (`OrderService.create`). `FlowEngine` closes this gap
+using the same `ClassInfo.getImplementedTypes()` data
+`InterfaceRoleResolver` uses for classification: whenever a call
+targets an interface method, the walk also continues from the
+same method on every class in the analyzed source known to
+implement that interface, in addition to the interface node
+itself (consistent with a flow being a full reachable subgraph,
+not one guessed linear path). This only works when the
+implementing class is part of the analyzed source set - an
+interface satisfied only by a dependency jar (no `ClassInfo` for
+it at all) still dead-ends, and that case remains
+indistinguishable from a genuinely short flow.
 
 A separate, deliberate safety net: the walk caps out at 2000
 visited nodes per entry point (`FlowEngine.MAX_VISITED_NODES`).
