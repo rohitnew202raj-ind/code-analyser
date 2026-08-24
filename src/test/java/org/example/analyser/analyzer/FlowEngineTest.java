@@ -5,6 +5,7 @@ import org.example.analyser.model.EntityMutationInfo;
 import org.example.analyser.model.EntryPointInfo;
 import org.example.analyser.model.FlowPath;
 import org.example.analyser.model.MethodCallInfo;
+import org.example.analyser.model.TriggerType;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -22,7 +23,7 @@ class FlowEngineTest {
         EntryPointInfo entryPoint =
                 new EntryPointInfo(
                         "OrderController", "com.acme.order", "create",
-                        "POST", "/orders", "order"
+                        TriggerType.POST, "/orders", "order"
                 );
 
         List<MethodCallInfo> calls = List.of(
@@ -83,7 +84,7 @@ class FlowEngineTest {
         EntryPointInfo entryPoint =
                 new EntryPointInfo(
                         "OrderController", "com.acme.order", "create",
-                        "POST", "/orders", "order"
+                        TriggerType.POST, "/orders", "order"
                 );
 
         List<MethodCallInfo> calls = List.of(
@@ -115,7 +116,7 @@ class FlowEngineTest {
         EntryPointInfo entryPoint =
                 new EntryPointInfo(
                         "OrderServiceImpl", "com.acme.order", "create",
-                        "POST", "/orders", "order"
+                        TriggerType.POST, "/orders", "order"
                 );
 
         List<MethodCallInfo> calls = List.of(
@@ -137,7 +138,7 @@ class FlowEngineTest {
                 new EntityMutationInfo(
                         "OrderMapper", "toEntity",
                         "Order", "status",
-                        "UPDATE", "order_tbl"
+                        "FIELD_MUTATION", "order_tbl"
                 )
         );
 
@@ -161,7 +162,7 @@ class FlowEngineTest {
         EntryPointInfo entryPoint =
                 new EntryPointInfo(
                         "A", "com.acme", "run",
-                        "SCHEDULED", null, "core"
+                        TriggerType.SCHEDULED, null, "core"
                 );
 
         List<MethodCallInfo> calls = List.of(
@@ -186,7 +187,7 @@ class FlowEngineTest {
         EntryPointInfo entryPoint =
                 new EntryPointInfo(
                         "LonelyController", "com.acme", "ping",
-                        "GET", "/ping", "core"
+                        TriggerType.GET, "/ping", "core"
                 );
 
         List<FlowPath> flows =

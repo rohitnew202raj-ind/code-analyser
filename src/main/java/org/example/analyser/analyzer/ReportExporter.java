@@ -3,6 +3,8 @@ package org.example.analyser.analyzer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.example.analyser.model.ArchitectureFinding;
 import org.example.analyser.model.ArchitectureFindingType;
+import org.example.analyser.model.BeanResolution;
+import org.example.analyser.model.BeanResolutionVerdict;
 import org.example.analyser.model.BehaviorClassification;
 import org.example.analyser.model.ClassCouplingInfo;
 import org.example.analyser.model.ClassInfo;
@@ -96,7 +98,8 @@ public class ReportExporter {
             List<DomainCycle> domainCycles,
             List<DomainBoundaryInfo> domainBoundaries,
             List<PersistenceFinding> persistenceFindings,
-            List<EntryPointBehavior> entryPointBehaviors) {
+            List<EntryPointBehavior> entryPointBehaviors,
+            List<BeanResolution> beanResolutions) {
     }
 
     public void export(
@@ -495,6 +498,7 @@ public class ReportExporter {
         appendSummarySection(html, report);
         appendArchitectureFindingsSection(html, report.architectureFindings());
         appendPersistenceFindingsSection(html, report.persistenceFindings());
+        appendBeanResolutionSection(html, report.beanResolutions());
         appendDomainBoundarySection(html, report.domainCycles(), report.domainBoundaries());
         appendDomainOverviewSection(html, report.domains());
         appendEntryPointSection(
@@ -553,6 +557,15 @@ public class ReportExporter {
                         )
                         .count()
         );
+        appendStatCard(
+                html, "Ambiguous bean resolutions",
+                report.beanResolutions().stream()
+                        .filter(resolution ->
+                                resolution.getVerdict()
+                                        == BeanResolutionVerdict.AMBIGUOUS
+                        )
+                        .count()
+        );
         html.append("</div>\n");
     }
 
@@ -586,6 +599,38 @@ public class ReportExporter {
                     .append(htmlEscape(finding.getType().name()))
                     .append("</span></td><td>")
                     .append(htmlEscape(finding.getDescription()))
+                    .append("</td></tr>\n");
+        }
+
+        html.append("</table>\n");
+    }
+
+    private void appendBeanResolutionSection(
+            StringBuilder html,
+            List<BeanResolution> resolutions) {
+
+        html.append("<h2>Bean Resolution</h2>\n");
+
+        if (resolutions.isEmpty()) {
+            html.append("<p class=\"empty\">")
+                    .append("No interfaces with multiple implementations found.")
+                    .append("</p>\n");
+            return;
+        }
+
+        html.append("<table>\n<tr><th>Interface</th><th>Verdict</th>")
+                .append("<th>Description</th></tr>\n");
+
+        for (BeanResolution resolution : resolutions) {
+
+            html.append("<tr><td>")
+                    .append(htmlEscape(resolution.getInterfaceName()))
+                    .append("</td><td><span class=\"badge badge-")
+                    .append(resolution.getVerdict().name().toLowerCase().replace('_', '-'))
+                    .append("\">")
+                    .append(htmlEscape(resolution.getVerdict().name()))
+                    .append("</span></td><td>")
+                    .append(htmlEscape(resolution.getDescription()))
                     .append("</td></tr>\n");
         }
 
@@ -722,7 +767,7 @@ public class ReportExporter {
                             : null;
 
             html.append("<tr><td>")
-                    .append(htmlEscape(entryPoint.getTriggerType()))
+                    .append(htmlEscape(entryPoint.getTriggerType().name()))
                     .append("</td><td>")
                     .append(
                             entryPoint.getPath() != null
@@ -807,6 +852,8 @@ public class ReportExporter {
                 .badge-shared-entity-hotspot { background: #ffe0b2; color: #7a3c00; }
                 .badge-read-only { background: #c8e6c9; color: #1b5e20; }
                 .badge-mutating { background: #ffe0b2; color: #7a3c00; }
+                .badge-resolved-by-primary { background: #c8e6c9; color: #1b5e20; }
+                .badge-ambiguous { background: #ffe0b2; color: #7a3c00; }
                 """;
     }
 }

@@ -1,5 +1,6 @@
 package org.example.analyser.analyzer;
 
+import org.example.analyser.model.ClassificationSource;
 import org.example.analyser.model.ClassInfo;
 import org.springframework.stereotype.Component;
 
@@ -102,6 +103,9 @@ public class InterfaceRoleResolver {
             String resolvedType = entry.getValue().iterator().next();
 
             interfaceInfo.setType(resolvedType);
+            interfaceInfo.setTypeSource(
+                    ClassificationSource.PROPAGATED_FROM_IMPLEMENTATION
+            );
 
             if (!interfaceInfo.getRoles().contains(resolvedType)) {
                 interfaceInfo.getRoles().add(resolvedType);

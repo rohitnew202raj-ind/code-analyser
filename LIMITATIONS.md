@@ -611,6 +611,205 @@ phase hand verification (building the jar, running it against a
 purpose-built sample, reading the actual output) that still
 happens for whatever a *new* phase adds.
 
+## Entity mutations are in-memory changes, not confirmed database writes
+
+`EntityMutationAnalyzer` previously recorded every setter call
+(`order.setStatus(x)`) with `operation = "UPDATE"` - the same word
+`CrudAnalyzer` uses for an actual repository write. That
+conflated two different things: a setter call only proves an
+object changed *in memory*. Whether it ever reaches the database
+depends on facts this analyzer has no way to confirm - whether
+the object is a JPA-managed entity at all (`new Order()` never
+gets persisted just because a setter was called on it, versus an
+entity loaded via a repository/`EntityManager`), whether the call
+happens inside a transaction, and whether a subsequent
+`repository.save(...)`/`EntityManager.merge(...)` or JPA
+dirty-checking at commit time actually writes it.
+
+The recorded operation is now `"FIELD_MUTATION"`, a distinct
+vocabulary from `CrudOperationInfo`'s `CREATE_OR_UPDATE`/`READ`/
+`UPDATE`/`DELETE`/`CUSTOM_QUERY`/`FLUSH`, so the two can no longer
+be confused downstream. This does not change any analyzer's
+*behavior* - `EntryPointBehaviorAnalyzer` already only checked
+whether the entity-mutations list was non-empty, never the
+operation string on it, so this was a mislabeling bug, not a
+detection bug. It matters because `report.json` is meant to be
+read and trusted directly (that's the whole point of Phase 5's
+export upgrade); a field that says `"UPDATE"` when no database
+write was ever confirmed is misleading on its own, independent of
+whether any analyzer's logic happened to look at it.
+
+**Not attempted here** (a real, larger follow-up, not folded into
+this fix): actually confirming persistence - tracking whether the
+mutated object was constructed fresh (`new Order()`, never
+persisted) versus loaded from a repository (a JPA-managed entity,
+where dirty checking will actually write the change), and whether
+a `@Transactional` boundary is in scope. That requires real
+data-flow analysis (tracing where an object came from across
+statements), not a single-call-site check, and deserves its own
+phase rather than a guess bolted onto this one.
+
+## Entry point trigger type is now a real enum
+
+`EntryPointInfo.triggerType` was a raw `String`, populated by
+`ApiAnalyzer` and `BatchAnalyzer` independently with whatever
+literal each happened to write. In practice the two analyzers
+already emitted genuinely distinct values per trigger kind - REST
+verbs (`GET`/`POST`/...), GraphQL operation kinds, and separate
+labels per batch/event annotation - so trigger kinds were *not*
+actually being collapsed into one generic "batch" bucket the way
+an early read of this code might suggest. What was real: two of
+those labels (`EVENTLISTENER`, `KAFKALISTENER`, and their
+siblings for JMS/Rabbit) were built by uppercasing an annotation's
+simple name with no separator, an accident of implementation
+rather than a deliberate naming choice, and nothing enforced that
+every analyzer's trigger label actually matched anything - a typo
+in a new analyzer's string literal would silently produce a
+trigger type nothing else recognized.
+
+`TriggerType` makes every execution model explicit as an enum:
+REST verbs, GraphQL operation kinds, and - now cleanly named -
+`SCHEDULED`, `ASYNC`, `EVENT_LISTENER`, `KAFKA_CONSUMER`,
+`JMS_CONSUMER`, `RABBIT_CONSUMER`, `SPRING_BATCH_STEP_COMPONENT`,
+`STARTUP_RUNNER`, and `MAIN_ENTRY_POINT`. `report.json`'s shape is
+unchanged - Jackson serializes an enum to its constant name by
+default, the same string that was there before (just spelled
+correctly and consistently now). `BatchAnalyzer` had zero test
+coverage for its six annotation-driven triggers before this
+change (only the interface-based and `main()`-based paths were
+tested); added a single test asserting all six map to their
+correct, distinct `TriggerType`.
+
+## Classification confidence: annotation vs. structural vs. guessed
+
+`ClassInfo.type` has always been determined by a mix of evidence
+of very different reliability - a class directly annotated
+`@Service` is unambiguous, while a class classified `DTO` purely
+because its name ends in `Dto` is a guess that a class like
+`OrderDtoValidator` would already defeat. Both were reported
+identically before this change, with no way for a `report.json`
+consumer to tell them apart.
+
+`ClassInfo.typeSource` (a new `ClassificationSource` enum) now
+records which kind of evidence actually produced `type`:
+
+- `ANNOTATION` - carries the deciding Spring stereotype directly
+  or through a composed/meta annotation.
+- `STRUCTURAL` - an AST-confirmed fact that isn't an annotation:
+  extending a known Spring Data repository interface with no
+  `@Repository` of its own, extending a known exception
+  supertype, or literally being an `interface` declaration.
+  Deliberately distinguished from `ANNOTATION` (different kind of
+  evidence) but still high confidence.
+- `NAMING_HEURISTIC` - matched a name suffix (`*Dto`, `*Event`,
+  `*Utils`, ...) because nothing stronger was found. Lower
+  confidence, and the one place false positives/negatives are
+  expected.
+- `NONE` - the `POJO` catch-all: no annotation, structural fact,
+  or naming pattern matched anything. Tagged separately from
+  `NAMING_HEURISTIC` since no heuristic actually fired to produce
+  it - it's the honest "nothing matched" default, not a guess
+  that happened to be wrong.
+
+One subtlety worth calling out explicitly: `REPOSITORY` and
+`EXCEPTION` can each be reached by *either* an annotation/
+naming-only path *or* a structural one (extending
+`JpaRepository`/`CrudRepository`/etc. with no `@Repository`
+annotation; extending a known exception supertype vs. only
+matching the `*Exception` name suffix). `SpringComponentAnalyzer`
+now distinguishes these per-class rather than reporting every
+repository or exception as equally confirmed.
+
+## Spring bean resolution: only @Primary, never a guess
+
+`BeanResolutionAnalyzer` answers a question nothing earlier in
+this tool addressed: when an interface has multiple Spring-managed
+implementations, which one actually gets wired when code
+`@Autowire`s it? Silent multi-implementation ambiguity was
+previously invisible - the dependency graph and call graph both
+already record edges against the *interface*, never a specific
+implementation (a pre-existing limitation `FlowEngine` documents),
+so there was no signal anywhere that an interface even had more
+than one candidate.
+
+**Deliberately, only `@Primary` is used to resolve ambiguity** -
+it's the one Spring bean-selection mechanism that's a static fact
+about the implementation class itself, true regardless of how or
+where the interface gets injected. `@Qualifier` and Spring
+profiles are explicitly **not** used to eliminate candidates:
+
+- `@Qualifier` disambiguates at each individual injection site (a
+  specific field/parameter), not at the interface level - the
+  same interface can resolve differently at two different call
+  sites in the same codebase. Modeling that needs per-injection-
+  site analysis, a larger feature than this pass attempts.
+- Which Spring profile is active is a deployment-time decision
+  this static analysis has no way to know. Eliminating a
+  `@Profile`-restricted candidate would be guessing how the
+  application is actually run, not reading a fact from the
+  source - so every profile-restricted candidate stays a
+  candidate, with its profile surfaced in the description as
+  context rather than used to narrow anything down.
+
+**Also not modeled**: `@Bean`-annotated factory methods inside
+`@Configuration` classes (only class-level `implements` plus
+class-level stereotype annotations are read), and `@Conditional`
+variants beyond `@Profile`. Only implementations already
+classified `SERVICE`/`REPOSITORY`/`COMPONENT` (confirmed
+Spring-managed candidates) count - a class that merely implements
+an interface without carrying a stereotype of its own (a test
+double, a manually-instantiated helper) is excluded, since it
+isn't a bean Spring would ever actually choose between.
+
+## WebFlux functional routing and Spring Batch builder detection
+
+Two entry-point gaps `ApiAnalyzer`/`BatchAnalyzer` were structurally
+unable to close, both closed by adding a dedicated analyzer rather
+than stretching an existing one to cover a shape it wasn't built
+for.
+
+**`WebFluxRouterAnalyzer`** finds WebFlux functional endpoints -
+`RouterFunction` beans built via `RouterFunctions.route()`'s
+fluent builder (`.GET(path, handler)`, `.POST(path, handler)`,
+...). `ApiAnalyzer` only recognizes annotation-based endpoints
+(`@GetMapping` et al.); functional routing declares no annotations
+on the handler methods at all, so it was previously entirely
+invisible. **Scope, explicitly**: only the modern builder-style
+chain is recognized, not the older `route(predicate, handler)
+.andRoute(...)` chain or `.nest(...)` composition. Only a method
+*reference* handler (`handler::getOrder`) produces an entry point;
+an inline lambda handler carries no method name to report one
+against, so those routes are silently skipped, not guessed at.
+One JavaParser quirk worth recording: the left side of `X::method`
+always parses as a `TypeExpr`, never a `NameExpr`, even when `X` is
+a lowercase local variable/parameter rather than an actual type -
+`handlerReference.getScope()` has to be read as a `TypeExpr` and
+its type's text used as the variable name, not matched against
+`NameExpr` as every other method-reference-adjacent lookup in this
+codebase does.
+
+**`SpringBatchBuilderAnalyzer`** finds Spring Batch jobs/steps
+assembled via `new JobBuilder(...)`/`new StepBuilder(...)` inside
+a `@Bean` method - exactly the gap `BatchAnalyzer`'s own javadoc
+already called out as unsolved (it only recognizes a class
+directly implementing `Tasklet`/`ItemReader`/etc., not a builder
+chain assembled inside a `@Configuration` method body).
+**Scope, explicitly**: this only makes the job/step *visible* as
+an entry point (class/method/domain) - it does not trace which
+`ItemReader`/`ItemProcessor`/`ItemWriter` beans a step actually
+wires. That would mean following each builder call's arguments
+back to the parameter/field that produced them - a data-flow
+problem, not a per-node AST check, and a real, larger follow-up
+left for a later phase.
+
+Verified end-to-end against the synthetic-monolith fixture: an
+`OrderRouterConfig` with two functional routes correctly produced
+`OrderHandler.getOrder`/`OrderHandler.createOrder` entry points
+(and correctly excluded `OrderHandler` from `DEAD_COMPONENT`, since
+it's now a recognized entry point owner), and an `OrderBatchConfig`
+correctly produced `SPRING_BATCH_JOB_BUILDER`/
+`SPRING_BATCH_STEP_BUILDER` entries.
+
 ## Parallelization scope
 
 Only the first pass (parsing + per-class structural analysis)

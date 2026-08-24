@@ -1,5 +1,6 @@
 package org.example.analyser.analyzer;
 
+import org.example.analyser.model.ClassificationSource;
 import org.example.analyser.model.ClassInfo;
 import org.junit.jupiter.api.Test;
 
@@ -28,6 +29,8 @@ class InterfaceRoleResolverTest {
 
         assertThat(orderService.getType()).isEqualTo("SERVICE");
         assertThat(orderService.getRoles()).contains("SERVICE");
+        assertThat(orderService.getTypeSource())
+                .isEqualTo(ClassificationSource.PROPAGATED_FROM_IMPLEMENTATION);
     }
 
     @Test

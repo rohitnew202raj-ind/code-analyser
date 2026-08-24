@@ -1,5 +1,6 @@
 package org.example.analyser.analyzer;
 
+import org.example.analyser.model.ClassificationSource;
 import org.example.analyser.model.ClassInfo;
 import org.springframework.stereotype.Component;
 
@@ -48,61 +49,89 @@ public class SpringComponentAnalyzer {
 
         // Primary type: first-match priority, kept for
         // backward compatibility with existing consumers
-        // that only look at a single `type`.
-        classInfo.setType(primaryType(classInfo));
+        // that only look at a single `type`. Paired with
+        // *why* it was determined - see ClassificationSource -
+        // so a consumer of report.json can tell a confirmed
+        // fact from an educated guess.
+        Classification classification =
+                determineType(classInfo, resolver);
+
+        classInfo.setType(classification.type());
+        classInfo.setTypeSource(classification.source());
     }
 
-    private String primaryType(ClassInfo classInfo) {
+    private record Classification(
+            String type,
+            ClassificationSource source) {
+    }
+
+    private Classification determineType(
+            ClassInfo classInfo,
+            MetaAnnotationResolver resolver) {
 
         if (classInfo.hasRole("APPLICATION")) {
-            return "APPLICATION";
+            return new Classification("APPLICATION", ClassificationSource.ANNOTATION);
         }
 
         if (classInfo.hasRole("REST_CONTROLLER")) {
-            return "CONTROLLER";
+            return new Classification("CONTROLLER", ClassificationSource.ANNOTATION);
         }
 
         if (classInfo.hasRole("MVC_CONTROLLER")) {
-            return "MVC_CONTROLLER";
+            return new Classification("MVC_CONTROLLER", ClassificationSource.ANNOTATION);
         }
 
         if (classInfo.hasRole("SERVICE")) {
-            return "SERVICE";
+            return new Classification("SERVICE", ClassificationSource.ANNOTATION);
         }
 
         if (classInfo.hasRole("REPOSITORY")) {
-            return "REPOSITORY";
+
+            /*
+             * REPOSITORY is added two ways: directly annotated
+             * (@Repository, ANNOTATION) or by extending a known
+             * Spring Data base interface with no annotation of
+             * its own (STRUCTURAL) - see extendsRepository().
+             * Distinguish them rather than reporting every
+             * repository as equally "confirmed by annotation."
+             */
+            ClassificationSource source =
+                    hasAnnotation(classInfo, resolver, "Repository")
+                            ? ClassificationSource.ANNOTATION
+                            : ClassificationSource.STRUCTURAL;
+
+            return new Classification("REPOSITORY", source);
         }
 
         if (classInfo.hasRole("ENTITY")) {
-            return "ENTITY";
+            return new Classification("ENTITY", ClassificationSource.ANNOTATION);
         }
 
         if (classInfo.hasRole("CONFIGURATION")) {
-            return "CONFIGURATION";
+            return new Classification("CONFIGURATION", ClassificationSource.ANNOTATION);
         }
 
         if (classInfo.hasRole("ASPECT")) {
-            return "ASPECT";
+            return new Classification("ASPECT", ClassificationSource.ANNOTATION);
         }
 
         if (classInfo.hasRole("CONTROLLER_ADVICE")) {
-            return "CONTROLLER_ADVICE";
+            return new Classification("CONTROLLER_ADVICE", ClassificationSource.ANNOTATION);
         }
 
         if (classInfo.hasRole("FEIGN_CLIENT")) {
-            return "FEIGN_CLIENT";
+            return new Classification("FEIGN_CLIENT", ClassificationSource.ANNOTATION);
         }
 
         if (classInfo.hasRole("GRPC_SERVICE")) {
-            return "GRPC_SERVICE";
+            return new Classification("GRPC_SERVICE", ClassificationSource.ANNOTATION);
         }
 
         if (classInfo.hasRole("COMPONENT")) {
-            return "COMPONENT";
+            return new Classification("COMPONENT", ClassificationSource.ANNOTATION);
         }
 
-        return fallbackType(classInfo);
+        return fallbackClassification(classInfo);
     }
 
     /**
@@ -113,52 +142,68 @@ public class SpringComponentAnalyzer {
      * of them into a single "UNKNOWN" bucket would throw away
      * information the report could otherwise surface. Ordered
      * from most to least specific; POJO is the final catch-all
-     * for anything that matches none of the patterns below.
+     * for anything that matches none of the patterns below, and
+     * is tagged {@code NONE} rather than {@code NAMING_HEURISTIC}
+     * since no heuristic actually matched to produce it.
      */
-    private String fallbackType(ClassInfo classInfo) {
+    private Classification fallbackClassification(ClassInfo classInfo) {
 
         if (isException(classInfo)) {
-            return "EXCEPTION";
+
+            ClassificationSource source =
+                    extendsKnownExceptionSupertype(classInfo)
+                            ? ClassificationSource.STRUCTURAL
+                            : ClassificationSource.NAMING_HEURISTIC;
+
+            return new Classification("EXCEPTION", source);
         }
 
         String name = classInfo.getName();
 
         if (name.endsWith("Event")) {
-            return "EVENT";
+            return new Classification("EVENT", ClassificationSource.NAMING_HEURISTIC);
         }
 
         if (name.endsWith("Dto")) {
-            return "DTO";
+            return new Classification("DTO", ClassificationSource.NAMING_HEURISTIC);
         }
 
         if (name.endsWith("Constants")) {
-            return "CONSTANTS";
+            return new Classification("CONSTANTS", ClassificationSource.NAMING_HEURISTIC);
         }
 
         if (name.endsWith("Specification")) {
-            return "SPECIFICATION";
+            return new Classification("SPECIFICATION", ClassificationSource.NAMING_HEURISTIC);
         }
 
         if (name.endsWith("Helper")
                 || name.endsWith("Utils")
                 || name.endsWith("Util")) {
 
-            return "UTILITY";
+            return new Classification("UTILITY", ClassificationSource.NAMING_HEURISTIC);
         }
 
         if (classInfo.isInterfaceDeclaration()) {
-            return "INTERFACE";
+
+            // A confirmed AST fact (this is literally an
+            // `interface` declaration), not a name-based guess.
+            return new Classification("INTERFACE", ClassificationSource.STRUCTURAL);
         }
 
-        return "POJO";
+        return new Classification("POJO", ClassificationSource.NONE);
     }
 
     private boolean isException(ClassInfo classInfo) {
 
         return classInfo.getName().endsWith("Exception")
-                || classInfo.getExtendedTypes()
-                        .stream()
-                        .anyMatch(EXCEPTION_SUPERTYPES::contains);
+                || extendsKnownExceptionSupertype(classInfo);
+    }
+
+    private boolean extendsKnownExceptionSupertype(ClassInfo classInfo) {
+
+        return classInfo.getExtendedTypes()
+                .stream()
+                .anyMatch(EXCEPTION_SUPERTYPES::contains);
     }
 
     private void addRoleIfPresent(

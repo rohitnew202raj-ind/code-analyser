@@ -20,15 +20,7 @@ public class EntryPointInfo {
     private String packageName;
     private String methodName;
 
-    /*
-     * What triggers this entry point: an HTTP method (GET,
-     * POST, ...), a GraphQL operation kind (GRAPHQL_QUERY,
-     * GRAPHQL_MUTATION, ...), or a batch/scheduling trigger
-     * (SCHEDULED, ASYNC, EVENTLISTENER, KAFKALISTENER,
-     * SPRING_BATCH_STEP_COMPONENT, MAIN_ENTRY_POINT,
-     * STARTUP_RUNNER, ...).
-     */
-    private String triggerType;
+    private TriggerType triggerType;
 
     /*
      * The REST path or GraphQL field name this entry point is
@@ -46,7 +38,7 @@ public class EntryPointInfo {
             String className,
             String packageName,
             String methodName,
-            String triggerType,
+            TriggerType triggerType,
             String path,
             String domain) {
 
@@ -82,11 +74,11 @@ public class EntryPointInfo {
         this.methodName = methodName;
     }
 
-    public String getTriggerType() {
+    public TriggerType getTriggerType() {
         return triggerType;
     }
 
-    public void setTriggerType(String triggerType) {
+    public void setTriggerType(TriggerType triggerType) {
         this.triggerType = triggerType;
     }
 

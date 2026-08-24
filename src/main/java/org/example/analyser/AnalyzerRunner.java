@@ -9,6 +9,7 @@ import com.github.javaparser.ast.body.TypeDeclaration;
 import org.example.analyser.analyzer.AnnotationNames;
 import org.example.analyser.analyzer.ApiAnalyzer;
 import org.example.analyser.analyzer.BatchAnalyzer;
+import org.example.analyser.analyzer.BeanResolutionAnalyzer;
 import org.example.analyser.analyzer.CircularDependencyAnalyzer;
 import org.example.analyser.analyzer.ClassAnalyzer;
 import org.example.analyser.analyzer.CouplingAnalyzer;
@@ -34,9 +35,12 @@ import org.example.analyser.analyzer.RepositoryInheritanceResolver;
 import org.example.analyser.analyzer.ReportExporter;
 import org.example.analyser.analyzer.RuntimeDependencyAnalyzer;
 import org.example.analyser.analyzer.SharedEntityHotspotAnalyzer;
+import org.example.analyser.analyzer.SpringBatchBuilderAnalyzer;
 import org.example.analyser.analyzer.SpringComponentAnalyzer;
+import org.example.analyser.analyzer.WebFluxRouterAnalyzer;
 
 import org.example.analyser.model.ArchitectureFinding;
+import org.example.analyser.model.BeanResolution;
 import org.example.analyser.model.ClassCouplingInfo;
 import org.example.analyser.model.ClassInfo;
 import org.example.analyser.model.CrudOperationInfo;
@@ -78,6 +82,7 @@ public class AnalyzerRunner implements CommandLineRunner {
     private final SpringComponentAnalyzer springComponentAnalyzer;
     private final RepositoryInheritanceResolver repositoryInheritanceResolver;
     private final InterfaceRoleResolver interfaceRoleResolver;
+    private final BeanResolutionAnalyzer beanResolutionAnalyzer;
     private final DependencyAnalyzer dependencyAnalyzer;
     private final RuntimeDependencyAnalyzer runtimeDependencyAnalyzer;
     private final DependencyGraphBuilder dependencyGraphBuilder;
@@ -99,6 +104,8 @@ public class AnalyzerRunner implements CommandLineRunner {
     private final DomainBoundaryAnalyzer domainBoundaryAnalyzer;
     private final NPlusOneQueryAnalyzer nPlusOneQueryAnalyzer;
     private final SharedEntityHotspotAnalyzer sharedEntityHotspotAnalyzer;
+    private final SpringBatchBuilderAnalyzer springBatchBuilderAnalyzer;
+    private final WebFluxRouterAnalyzer webFluxRouterAnalyzer;
     private final ReportExporter reportExporter;
 
     public AnalyzerRunner(
@@ -109,6 +116,7 @@ public class AnalyzerRunner implements CommandLineRunner {
             SpringComponentAnalyzer springComponentAnalyzer,
             RepositoryInheritanceResolver repositoryInheritanceResolver,
             InterfaceRoleResolver interfaceRoleResolver,
+            BeanResolutionAnalyzer beanResolutionAnalyzer,
             DependencyAnalyzer dependencyAnalyzer,
             RuntimeDependencyAnalyzer runtimeDependencyAnalyzer,
             DependencyGraphBuilder dependencyGraphBuilder,
@@ -130,6 +138,8 @@ public class AnalyzerRunner implements CommandLineRunner {
             DomainBoundaryAnalyzer domainBoundaryAnalyzer,
             NPlusOneQueryAnalyzer nPlusOneQueryAnalyzer,
             SharedEntityHotspotAnalyzer sharedEntityHotspotAnalyzer,
+            SpringBatchBuilderAnalyzer springBatchBuilderAnalyzer,
+            WebFluxRouterAnalyzer webFluxRouterAnalyzer,
             ReportExporter reportExporter) {
 
         this.projectScanner = projectScanner;
@@ -139,6 +149,7 @@ public class AnalyzerRunner implements CommandLineRunner {
         this.springComponentAnalyzer = springComponentAnalyzer;
         this.repositoryInheritanceResolver = repositoryInheritanceResolver;
         this.interfaceRoleResolver = interfaceRoleResolver;
+        this.beanResolutionAnalyzer = beanResolutionAnalyzer;
         this.dependencyAnalyzer = dependencyAnalyzer;
         this.runtimeDependencyAnalyzer = runtimeDependencyAnalyzer;
         this.dependencyGraphBuilder = dependencyGraphBuilder;
@@ -160,6 +171,8 @@ public class AnalyzerRunner implements CommandLineRunner {
         this.domainBoundaryAnalyzer = domainBoundaryAnalyzer;
         this.nPlusOneQueryAnalyzer = nPlusOneQueryAnalyzer;
         this.sharedEntityHotspotAnalyzer = sharedEntityHotspotAnalyzer;
+        this.springBatchBuilderAnalyzer = springBatchBuilderAnalyzer;
+        this.webFluxRouterAnalyzer = webFluxRouterAnalyzer;
         this.reportExporter = reportExporter;
     }
 
@@ -298,6 +311,19 @@ public class AnalyzerRunner implements CommandLineRunner {
         interfaceRoleResolver.resolve(classes);
 
         // ======================================
+        // STEP 3c: BEAN RESOLUTION
+        //
+        // For every interface with 2+ Spring-managed
+        // implementations, works out which one actually gets
+        // wired (via @Primary) or reports the candidates instead
+        // of guessing. See BeanResolutionAnalyzer for exactly
+        // what is and isn't resolved.
+        // ======================================
+
+        List<BeanResolution> beanResolutions =
+                beanResolutionAnalyzer.analyze(classes);
+
+        // ======================================
         // STEP 4: ENTRY POINTS - REST/GRAPHQL APIS
         // + BATCH/SCHEDULED/STARTUP PROGRAMS
         //
@@ -321,6 +347,23 @@ public class AnalyzerRunner implements CommandLineRunner {
                     batchAnalyzer.analyze(
                             parsedClass.declaration(),
                             parsedClass.classInfo(),
+                            domainExtractor
+                    )
+            );
+
+            entryPoints.addAll(
+                    springBatchBuilderAnalyzer.analyze(
+                            parsedClass.declaration(),
+                            parsedClass.classInfo(),
+                            domainExtractor
+                    )
+            );
+
+            entryPoints.addAll(
+                    webFluxRouterAnalyzer.analyze(
+                            parsedClass.declaration(),
+                            parsedClass.classInfo(),
+                            classes,
                             domainExtractor
                     )
             );
@@ -543,7 +586,8 @@ public class AnalyzerRunner implements CommandLineRunner {
                         domainCycles,
                         domainBoundaries,
                         persistenceFindings,
-                        entryPointBehaviors
+                        entryPointBehaviors,
+                        beanResolutions
                 );
 
         try {
@@ -598,7 +642,8 @@ public class AnalyzerRunner implements CommandLineRunner {
             System.out.println("--------------------------------------");
             System.out.println("CLASS: " + classInfo.getName());
             System.out.println("PACKAGE: " + classInfo.getPackageName());
-            System.out.println("TYPE: " + classInfo.getType());
+            System.out.println("TYPE: " + classInfo.getType()
+                    + " (" + classInfo.getTypeSource() + ")");
             System.out.println("ROLES: " + classInfo.getRoles());
 
             System.out.println("ANNOTATIONS:");
@@ -612,6 +657,31 @@ public class AnalyzerRunner implements CommandLineRunner {
             System.out.println("METHODS:");
             classInfo.getMethods()
                     .forEach(m -> System.out.println("  " + m));
+        }
+
+        // ======================================
+        // PRINT: BEAN RESOLUTION
+        // ======================================
+
+        System.out.println();
+        System.out.println("======================================");
+        System.out.println("          BEAN RESOLUTION");
+        System.out.println("======================================");
+
+        if (beanResolutions.isEmpty()) {
+
+            System.out.println("(no interfaces with multiple "
+                    + "implementations found)");
+
+        } else {
+
+            beanResolutions.forEach(resolution ->
+                    System.out.println(
+                            resolution.getInterfaceName()
+                                    + " | " + resolution.getVerdict()
+                                    + " | " + resolution.getDescription()
+                    )
+            );
         }
 
         // ======================================

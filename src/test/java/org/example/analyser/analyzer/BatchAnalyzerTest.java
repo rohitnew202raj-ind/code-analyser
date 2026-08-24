@@ -5,6 +5,7 @@ import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.TypeDeclaration;
 import org.example.analyser.model.EntryPointInfo;
 import org.example.analyser.model.ClassInfo;
+import org.example.analyser.model.TriggerType;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -47,7 +48,7 @@ class BatchAnalyzerTest {
 
         assertThat(results)
                 .extracting(EntryPointInfo::getTriggerType)
-                .contains("MAIN_ENTRY_POINT");
+                .contains(TriggerType.MAIN_ENTRY_POINT);
     }
 
     @Test
@@ -82,7 +83,7 @@ class BatchAnalyzerTest {
 
         assertThat(results)
                 .extracting(EntryPointInfo::getTriggerType)
-                .doesNotContain("MAIN_ENTRY_POINT");
+                .doesNotContain(TriggerType.MAIN_ENTRY_POINT);
     }
 
     @Test
@@ -124,7 +125,7 @@ class BatchAnalyzerTest {
                         EntryPointInfo::getTriggerType,
                         EntryPointInfo::getMethodName
                 )
-                .containsExactly(tuple("STARTUP_RUNNER", "run"));
+                .containsExactly(tuple(TriggerType.STARTUP_RUNNER, "run"));
     }
 
     @Test
@@ -163,7 +164,70 @@ class BatchAnalyzerTest {
 
         assertThat(results)
                 .extracting(EntryPointInfo::getTriggerType)
-                .containsExactly("STARTUP_RUNNER");
+                .containsExactly(TriggerType.STARTUP_RUNNER);
+    }
+
+    @Test
+    void mapsEachTriggerAnnotationToItsOwnDistinctTriggerType() {
+
+        // Regression coverage for the bug this fixes: these six
+        // annotations used to collapse into ad hoc uppercased
+        // strings (some missing an underscore entirely, e.g.
+        // "EVENTLISTENER"/"KAFKALISTENER") rather than being
+        // genuinely distinct, typo-proof enum constants.
+        CompilationUnit cu = StaticJavaParser.parse(
+                """
+                package com.acme;
+
+                public class Triggers {
+                    @org.springframework.scheduling.annotation.Scheduled
+                    public void onSchedule() {}
+
+                    @org.springframework.scheduling.annotation.Async
+                    public void onAsync() {}
+
+                    @org.springframework.context.event.EventListener
+                    public void onEvent() {}
+
+                    @org.springframework.kafka.annotation.KafkaListener
+                    public void onKafka() {}
+
+                    @org.springframework.jms.annotation.JmsListener
+                    public void onJms() {}
+
+                    @org.springframework.amqp.rabbit.annotation.RabbitListener
+                    public void onRabbit() {}
+                }
+                """
+        );
+
+        TypeDeclaration<?> declaration =
+                cu.findAll(TypeDeclaration.class).get(0);
+
+        ClassInfo classInfo = new ClassInfo();
+        classInfo.setName("Triggers");
+        classInfo.setPackageName("com.acme");
+
+        List<EntryPointInfo> results =
+                batchAnalyzer.analyze(
+                        declaration,
+                        classInfo,
+                        PackageDomainExtractor.fit(List.of(classInfo))
+                );
+
+        assertThat(results)
+                .extracting(
+                        EntryPointInfo::getTriggerType,
+                        EntryPointInfo::getMethodName
+                )
+                .containsExactlyInAnyOrder(
+                        tuple(TriggerType.SCHEDULED, "onSchedule"),
+                        tuple(TriggerType.ASYNC, "onAsync"),
+                        tuple(TriggerType.EVENT_LISTENER, "onEvent"),
+                        tuple(TriggerType.KAFKA_CONSUMER, "onKafka"),
+                        tuple(TriggerType.JMS_CONSUMER, "onJms"),
+                        tuple(TriggerType.RABBIT_CONSUMER, "onRabbit")
+                );
     }
 
     @Test

@@ -188,6 +188,13 @@ class SyntheticMonolithIntegrationTest {
     }
 
     @Test
+    void findsBothBeanResolutionVerdicts() {
+
+        assertThat(fieldValues(report.get("beanResolutions"), "verdict"))
+                .contains("RESOLVED_BY_PRIMARY", "AMBIGUOUS");
+    }
+
+    @Test
     void classifiesBothReadOnlyAndMutatingEntryPoints() {
 
         assertThat(fieldValues(report.get("entryPointBehaviors"), "classification"))
@@ -199,6 +206,19 @@ class SyntheticMonolithIntegrationTest {
 
         assertThat(fieldValues(report.get("entryPoints"), "triggerType"))
                 .contains("GET", "POST", "SCHEDULED");
+    }
+
+    @Test
+    void discoversWebFluxFunctionalRoutesAndSpringBatchBuilders() {
+
+        assertThat(fieldValues(report.get("entryPoints"), "triggerType"))
+                .contains(
+                        "SPRING_BATCH_JOB_BUILDER",
+                        "SPRING_BATCH_STEP_BUILDER"
+                );
+
+        assertThat(fieldValues(report.get("entryPoints"), "className"))
+                .contains("OrderHandler");
     }
 
     private List<String> fieldValues(JsonNode array, String fieldName) {
