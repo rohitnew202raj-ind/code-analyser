@@ -491,7 +491,8 @@ public class AnalyzerRunner implements CommandLineRunner {
                         entryPoints,
                         methodCalls,
                         crudOperations,
-                        entityMutations
+                        entityMutations,
+                        classes
                 );
 
         // ======================================

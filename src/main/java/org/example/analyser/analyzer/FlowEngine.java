@@ -1,5 +1,6 @@
 package org.example.analyser.analyzer;
 
+import org.example.analyser.model.ClassInfo;
 import org.example.analyser.model.CrudOperationInfo;
 import org.example.analyser.model.EntityMutationInfo;
 import org.example.analyser.model.EntryPointInfo;
@@ -34,20 +35,30 @@ import java.util.function.Function;
  * chain: a real method almost always fans out into several
  * calls, and forcing that into one "path" would be misleading.
  *
- * LIMITATION (documented, not solved): the call graph this walks
- * is keyed by simple class name, the same representation
- * MethodCallAnalyzer/CrudAnalyzer already use, so it inherits
- * their resolution boundaries. Concretely: when a service field
- * is declared by interface type and the resolved call target is
- * recorded under the interface's name rather than its
- * implementation's (this happens when Symbol Solver resolves to
- * the declared type rather than a concrete implementation), the
- * walk dead-ends there - the implementation's own outgoing
- * calls are recorded under the implementation class's name, not
- * the interface's, so they're simply never reached. A flow that
- * looks short is sometimes a real short flow and sometimes this
- * boundary; both are represented identically (no more edges
- * found from that node) rather than guessed.
+ * The call graph this walks is keyed by simple class name, the
+ * same representation MethodCallAnalyzer/CrudAnalyzer already
+ * use, so it inherits their resolution boundaries: when a
+ * service field is declared by interface type, the resolved
+ * call target is recorded under the interface's name rather
+ * than its implementation's (Symbol Solver resolves to the
+ * declared type, not a concrete implementation), while the
+ * implementation's own outgoing calls are recorded under the
+ * implementation class's name. Left alone, that means the walk
+ * dead-ends at every interface-mediated call - which is most of
+ * them, since programming to an interface is the standard
+ * Spring layering (Controller -&gt; Service interface ->
+ * ServiceImpl -&gt; Repository).
+ *
+ * To bridge that gap, whenever a call target is a node with no
+ * outgoing edges of its own, the walk also continues from the
+ * same method on every class known (from {@link ClassInfo#getImplementedTypes()})
+ * to implement that interface - in addition to, not instead of,
+ * the interface node itself, consistent with this being a full
+ * reachable subgraph rather than a single guessed path. This
+ * only works when the implementing class is part of the
+ * analyzed source set; an interface satisfied only by a
+ * dependency jar (no {@link ClassInfo} for it) still dead-ends,
+ * and is indistinguishable from a genuinely short flow.
  *
  * A second, deliberate safety net: {@link #MAX_VISITED_NODES}
  * caps how large a single walk can grow. Real flows are a
@@ -66,7 +77,8 @@ public class FlowEngine {
             List<EntryPointInfo> entryPoints,
             List<MethodCallInfo> methodCalls,
             List<CrudOperationInfo> crudOperations,
-            List<EntityMutationInfo> entityMutations) {
+            List<EntityMutationInfo> entityMutations,
+            List<ClassInfo> classes) {
 
         Map<String, List<MethodCallInfo>> callsBySource =
                 groupByNode(
@@ -89,6 +101,9 @@ public class FlowEngine {
                         EntityMutationInfo::getSourceMethod
                 );
 
+        Map<String, List<String>> implementationsByInterface =
+                groupImplementationsByInterface(classes);
+
         List<FlowPath> paths = new ArrayList<>();
 
         for (EntryPointInfo entryPoint : entryPoints) {
@@ -98,7 +113,8 @@ public class FlowEngine {
                             entryPoint,
                             callsBySource,
                             crudBySource,
-                            mutationsBySource
+                            mutationsBySource,
+                            implementationsByInterface
                     )
             );
         }
@@ -110,7 +126,8 @@ public class FlowEngine {
             EntryPointInfo entryPoint,
             Map<String, List<MethodCallInfo>> callsBySource,
             Map<String, List<CrudOperationInfo>> crudBySource,
-            Map<String, List<EntityMutationInfo>> mutationsBySource) {
+            Map<String, List<EntityMutationInfo>> mutationsBySource,
+            Map<String, List<String>> implementationsByInterface) {
 
         Set<String> visited = new LinkedHashSet<>();
         Deque<String> toVisit = new ArrayDeque<>();
@@ -165,6 +182,27 @@ public class FlowEngine {
                 if (!visited.contains(nextNode)) {
                     toVisit.add(nextNode);
                 }
+
+                // The target may be an interface method - also
+                // continue the walk from the same method on every
+                // known implementing class, since that's where its
+                // real outgoing calls (and any CRUD/mutation facts)
+                // are recorded. See the class javadoc.
+                for (String implementationClass :
+                        implementationsByInterface.getOrDefault(
+                                call.getTargetClass(), List.of()
+                        )) {
+
+                    String implementationNode =
+                            nodeKey(
+                                    implementationClass,
+                                    call.getTargetMethod()
+                            );
+
+                    if (!visited.contains(implementationNode)) {
+                        toVisit.add(implementationNode);
+                    }
+                }
             }
         }
 
@@ -179,6 +217,27 @@ public class FlowEngine {
 
     private String nodeKey(String className, String methodName) {
         return className + "." + methodName;
+    }
+
+    private Map<String, List<String>> groupImplementationsByInterface(
+            List<ClassInfo> classes) {
+
+        Map<String, List<String>> byInterface = new HashMap<>();
+
+        for (ClassInfo classInfo : classes) {
+
+            for (String implementedType : classInfo.getImplementedTypes()) {
+
+                byInterface
+                        .computeIfAbsent(
+                                implementedType,
+                                unused -> new ArrayList<>()
+                        )
+                        .add(classInfo.getName());
+            }
+        }
+
+        return byInterface;
     }
 
     private <T> Map<String, List<T>> groupByNode(
