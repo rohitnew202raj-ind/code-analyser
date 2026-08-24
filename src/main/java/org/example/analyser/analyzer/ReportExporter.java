@@ -18,11 +18,16 @@ import org.example.analyser.model.DomainCycle;
 import org.example.analyser.model.DomainDependency;
 import org.example.analyser.model.DomainInfo;
 import org.example.analyser.model.EntityMutationInfo;
+import org.example.analyser.model.EndpointFlowSummary;
 import org.example.analyser.model.EntryPointBehavior;
 import org.example.analyser.model.EntryPointInfo;
 import org.example.analyser.model.FlowPath;
+import org.example.analyser.model.InsightsReport;
 import org.example.analyser.model.MethodCallInfo;
+import org.example.analyser.model.MultiTableTransaction;
 import org.example.analyser.model.PersistenceFinding;
+import org.example.analyser.model.TableUsageSummary;
+import org.example.analyser.model.TriggerType;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -30,7 +35,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -125,7 +132,8 @@ public class ReportExporter {
     public void export(
             Path outputDirectory,
             AnalysisReport report,
-            DependencyGraph dependencyGraph) throws IOException {
+            DependencyGraph dependencyGraph,
+            InsightsReport insights) throws IOException {
 
         Files.createDirectories(outputDirectory);
 
@@ -170,6 +178,11 @@ public class ReportExporter {
                         report.domainDependencies(),
                         report.domainBoundaries()
                 )
+        );
+
+        Files.writeString(
+                outputDirectory.resolve("insights-report.html"),
+                toInsightsReportHtml(insights)
         );
 
         writeSequenceDiagrams(outputDirectory, report.flows());
@@ -1003,6 +1016,501 @@ public class ReportExporter {
             """;
 
     // ==========================================
+    // ARCHITECTURE INSIGHTS (graphical HTML)
+    //
+    // A purpose-built report answering the cross-cutting
+    // questions a reader actually has when planning a
+    // decomposition ("what domains exist", "which table does
+    // this API touch", "what's cheapest to extract first", "which
+    // methods touch multiple tables") in one page, with charts for
+    // the two naturally rankable questions (shared-table usage,
+    // extraction cost) rather than raw tables only. Same
+    // self-contained, no-external-library approach as
+    // domain-extraction-map.html - the data is embedded as JSON
+    // and rendered client-side, so the file opens directly from
+    // disk with nothing else to install.
+    // ==========================================
+
+    private static final Set<TriggerType> REST_TRIGGER_TYPES = Set.of(
+            TriggerType.GET, TriggerType.POST, TriggerType.PUT,
+            TriggerType.PATCH, TriggerType.DELETE, TriggerType.ANY,
+            TriggerType.GRAPHQL_QUERY, TriggerType.GRAPHQL_MUTATION,
+            TriggerType.GRAPHQL_SUBSCRIPTION, TriggerType.GRAPHQL_SCHEMA_MAPPING
+    );
+
+    private record InsightsDomainRow(String name, int classCount) {
+    }
+
+    private record InsightsEndpointRow(
+            String trigger,
+            String triggerType,
+            String className,
+            String methodName,
+            String domain,
+            List<String> callChain,
+            List<String> tablesRead,
+            List<String> tablesWritten,
+            List<String> tablesCustomQuery,
+            boolean truncated) {
+    }
+
+    private record InsightsTableRow(
+            String table, String entity, List<String> classes, int count) {
+    }
+
+    private record InsightsExtractionRow(
+            String domain,
+            String verdict,
+            int crossDomainEdgeCount,
+            int classCount,
+            String reason) {
+    }
+
+    private record InsightsTransactionRow(
+            String className,
+            String methodName,
+            String domain,
+            List<String> tables,
+            List<String> entities,
+            boolean spansMultipleDomains) {
+    }
+
+    private String toInsightsReportHtml(InsightsReport insights) {
+
+        List<InsightsDomainRow> domainRows =
+                insights.getDomains().stream()
+                        .sorted(Comparator.comparing(DomainInfo::getName))
+                        .map(domain -> new InsightsDomainRow(
+                                domain.getName(), domain.getClassCount()
+                        ))
+                        .toList();
+
+        List<InsightsEndpointRow> restRows = new ArrayList<>();
+        List<InsightsEndpointRow> batchRows = new ArrayList<>();
+
+        for (EndpointFlowSummary flow : insights.getEndpointFlows()) {
+
+            InsightsEndpointRow row = new InsightsEndpointRow(
+                    flow.getTriggerLabel(),
+                    flow.getTriggerType().name(),
+                    flow.getEntryClassName(),
+                    flow.getEntryMethodName(),
+                    flow.getDomain(),
+                    flow.getCallChain(),
+                    flow.getTablesRead(),
+                    flow.getTablesWritten(),
+                    flow.getTablesCustomQuery(),
+                    flow.isTruncated()
+            );
+
+            if (REST_TRIGGER_TYPES.contains(flow.getTriggerType())) {
+                restRows.add(row);
+            } else {
+                batchRows.add(row);
+            }
+        }
+
+        List<InsightsTableRow> sharedTableRows =
+                insights.getSharedTableRanking().stream()
+                        .map(usage -> new InsightsTableRow(
+                                usage.getTableName(),
+                                usage.getEntityClass(),
+                                usage.getTouchingClasses(),
+                                usage.getTouchingClassCount()
+                        ))
+                        .toList();
+
+        List<InsightsExtractionRow> extractionRows =
+                insights.getExtractionRanking().stream()
+                        .map(boundary -> new InsightsExtractionRow(
+                                boundary.getDomainName(),
+                                boundary.getVerdict().name(),
+                                boundary.getCrossDomainEdgeCount(),
+                                boundary.getClassCount(),
+                                boundary.getReason()
+                        ))
+                        .toList();
+
+        List<InsightsTransactionRow> transactionRows =
+                insights.getMultiTableTransactions().stream()
+                        .map(transaction -> new InsightsTransactionRow(
+                                transaction.getClassName(),
+                                transaction.getMethodName(),
+                                transaction.getDomain(),
+                                transaction.getTables(),
+                                transaction.getEntities(),
+                                transaction.isSpansMultipleDomains()
+                        ))
+                        .toList();
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("domains", domainRows);
+        payload.put("restEndpoints", restRows);
+        payload.put("batchJobs", batchRows);
+        payload.put("tablesByDomain", insights.getTablesByDomain());
+        payload.put("sharedTables", sharedTableRows);
+        payload.put("extractionRanking", extractionRows);
+        payload.put("multiTableTransactions", transactionRows);
+
+        String dataJson;
+
+        try {
+            dataJson = objectMapper.writeValueAsString(payload);
+        } catch (JsonProcessingException impossible) {
+            // Every field above is a plain string/int/boolean/list
+            // already produced by earlier analysis stages - this
+            // can't realistically fail. Fall back to an empty
+            // payload rather than letting one exporter output take
+            // down the rest of export().
+            dataJson = "{}";
+        }
+
+        return INSIGHTS_REPORT_TEMPLATE.replace("__DATA_JSON__", dataJson);
+    }
+
+    private static final String INSIGHTS_REPORT_TEMPLATE = """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+            <meta charset="UTF-8">
+            <title>Architecture Insights</title>
+            <style>
+              :root {
+                --ground: #F6F7F9;
+                --surface: #FFFFFF;
+                --surface-2: #FBFCFD;
+                --ink: #1A212B;
+                --ink-soft: #5C6675;
+                --ink-faint: #8B94A1;
+                --line: #DFE3E9;
+                --accent: #1F6F6B;
+                --write: #C24450;
+                --write-bg: rgba(194,68,80,0.12);
+                --read: #2E9663;
+                --read-bg: rgba(46,150,99,0.12);
+                --custom: #C67A1E;
+                --custom-bg: rgba(198,122,30,0.14);
+                --status-candidate: #2E9663;
+                --status-tangled: #C67A1E;
+                --status-blocked: #C24450;
+                --font-display: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+                --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                --radius-lg: 12px;
+                --radius-md: 8px;
+              }
+              @media (prefers-color-scheme: dark) {
+                :root {
+                  --ground: #11151B;
+                  --surface: #181E26;
+                  --surface-2: #1D242D;
+                  --ink: #E7EBF0;
+                  --ink-soft: #93A0AF;
+                  --ink-faint: #66707D;
+                  --line: #2A323D;
+                  --accent: #52C4BC;
+                  --write: #E3626C;
+                  --write-bg: rgba(227,98,108,0.16);
+                  --read: #45C688;
+                  --read-bg: rgba(69,198,136,0.16);
+                  --custom: #E2963E;
+                  --custom-bg: rgba(226,150,62,0.16);
+                  --status-candidate: #45C688;
+                  --status-tangled: #E2963E;
+                  --status-blocked: #E3626C;
+                }
+              }
+              * { box-sizing: border-box; }
+              html, body { background: var(--ground); }
+              body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--font-body); }
+              .page { max-width: 1200px; margin: 0 auto; padding: 28px 32px 64px; display: flex; flex-direction: column; gap: 32px; }
+              header.topbar h1 { font-family: var(--font-display); font-size: 1.55rem; margin: 0 0 6px; letter-spacing: -0.01em; }
+              header.topbar p { margin: 0; color: var(--ink-soft); font-size: 0.875rem; }
+              .stat-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+              .stat-tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 10px 16px; min-width: 110px; display: flex; flex-direction: column; gap: 2px; }
+              .stat-value { font-family: var(--font-display); font-size: 1.4rem; font-variant-numeric: tabular-nums; line-height: 1; color: var(--accent); }
+              .stat-label { font-size: 0.68rem; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.04em; }
+              section { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 20px 22px; }
+              section h2 { font-family: var(--font-display); font-size: 0.95rem; margin: 0 0 4px; letter-spacing: -0.005em; }
+              section .q { color: var(--ink-soft); font-size: 0.8rem; margin: 0 0 16px; }
+              input.filter { width: 100%; max-width: 340px; padding: 7px 10px; border-radius: var(--radius-md); border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); font-size: 0.82rem; margin-bottom: 12px; }
+              input.filter:focus { outline: none; border-color: var(--accent); }
+              table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+              th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+              th { color: var(--ink-soft); font-weight: 600; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; }
+              tr:hover td { background: var(--surface-2); }
+              td.mono, .mono { font-family: var(--font-display); font-size: 0.78rem; }
+              .chip-row { display: flex; flex-wrap: wrap; gap: 4px; }
+              .chip { font-family: var(--font-display); font-size: 0.7rem; padding: 2px 7px; border-radius: 5px; background: var(--surface-2); border: 1px solid var(--line); white-space: nowrap; }
+              .chip.write { background: var(--write-bg); color: var(--write); border-color: transparent; }
+              .chip.read { background: var(--read-bg); color: var(--read); border-color: transparent; }
+              .chip.custom { background: var(--custom-bg); color: var(--custom); border-color: transparent; }
+              .chip.domain { background: rgba(31,111,107,0.12); color: var(--accent); border-color: transparent; }
+              .call-chain { display: flex; flex-direction: column; gap: 2px; font-family: var(--font-display); font-size: 0.72rem; color: var(--ink-soft); }
+              .empty-state { color: var(--ink-soft); font-size: 0.85rem; font-style: italic; }
+              .bar-chart { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
+              .bar-row { display: grid; grid-template-columns: 160px 1fr 42px; align-items: center; gap: 10px; font-size: 0.78rem; }
+              .bar-name { font-family: var(--font-display); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+              .bar-track { background: var(--surface-2); border-radius: 5px; height: 16px; overflow: hidden; border: 1px solid var(--line); }
+              .bar-fill { height: 100%; border-radius: 4px 0 0 4px; }
+              .bar-fill.candidate { background: var(--status-candidate); }
+              .bar-fill.tangled { background: var(--status-tangled); }
+              .bar-fill.blocked { background: var(--status-blocked); }
+              .bar-fill.table { background: var(--accent); }
+              .bar-value { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-soft); }
+              .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.03em; font-weight: 600; }
+              .badge.candidate { background: rgba(46,150,99,0.14); color: var(--status-candidate); }
+              .badge.tangled { background: rgba(198,122,30,0.16); color: var(--status-tangled); }
+              .badge.blocked { background: rgba(194,68,80,0.14); color: var(--status-blocked); }
+              .badge.spans { background: var(--write-bg); color: var(--write); }
+              .badge.contained { background: rgba(139,148,161,0.16); color: var(--ink-soft); }
+              details.chain-toggle summary { cursor: pointer; color: var(--accent); font-size: 0.76rem; }
+              .legend-note { font-size: 0.74rem; color: var(--ink-faint); margin: 4px 0 0; }
+              .footer-note { font-size: 0.76rem; color: var(--ink-faint); }
+            </style>
+            </head>
+            <body>
+            <div class="page">
+              <header class="topbar">
+                <h1>Architecture Insights</h1>
+                <p>Cross-cutting answers derived from the same analysis data as <code>report.json</code> - no new parsing, just new questions asked of it.</p>
+                <div class="stat-row" id="statRow"></div>
+              </header>
+
+              <section id="domainsSection">
+                <h2>Domains</h2>
+                <p class="q">What are the different domains?</p>
+                <table id="domainsTable"></table>
+              </section>
+
+              <section id="extractionSection">
+                <h2>Extraction ranking</h2>
+                <p class="q">Which domain has the fewest cross-domain calls - cheapest and safest to extract first?</p>
+                <div class="bar-chart" id="extractionChart"></div>
+                <table id="extractionTable"></table>
+                <p class="legend-note">Sorted extraction-candidate-first, then by cross-domain edge count ascending. A domain blocked by a cycle stays last regardless of its raw edge count - the cycle has to be broken before extraction is possible at all.</p>
+              </section>
+
+              <section id="tablesByDomainSection">
+                <h2>Domain &rarr; database</h2>
+                <p class="q">What domain is connected to which database table?</p>
+                <table id="tablesByDomainTable"></table>
+              </section>
+
+              <section id="sharedTablesSection">
+                <h2>Shared table usage</h2>
+                <p class="q">Which entity/table is shared by many different services?</p>
+                <div class="bar-chart" id="sharedTablesChart"></div>
+                <table id="sharedTablesTable"></table>
+              </section>
+
+              <section id="restSection">
+                <h2>REST endpoint call chains</h2>
+                <p class="q">Which DB table is called for a given API, and what's the full call chain controller &rarr; service &rarr; repository &rarr; table?</p>
+                <input class="filter" type="text" id="restFilter" placeholder="Filter by path, class, domain, or table&hellip;">
+                <table id="restTable"></table>
+              </section>
+
+              <section id="batchSection">
+                <h2>Batch / scheduled job flows</h2>
+                <p class="q">What does each batch job read and write, end-to-end?</p>
+                <input class="filter" type="text" id="batchFilter" placeholder="Filter by class, domain, or table&hellip;">
+                <table id="batchTable"></table>
+              </section>
+
+              <section id="transactionsSection">
+                <h2>Multi-table transactions</h2>
+                <p class="q">Are there methods whose own body touches multiple tables/domains in one call - a sign you'll need sagas after splitting?</p>
+                <table id="transactionsTable"></table>
+                <p class="legend-note">Scope: a method's own direct repository calls only, not <code>@Transactional</code> propagation into methods it calls in turn. Flags the multi-table fact itself, regardless of whether the method carries a transaction annotation - see LIMITATIONS.md.</p>
+              </section>
+
+              <p class="footer-note">Full underlying data: <code>report.json</code>. Domain dependency graph: <a href="domain-extraction-map.html">domain-extraction-map.html</a>. Per-endpoint sequence diagrams: <code>sequence-diagrams/*.mmd</code>.</p>
+            </div>
+            <script>
+            (function () {
+              var DATA = __DATA_JSON__;
+
+              function esc(s) {
+                return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+                  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
+                });
+              }
+
+              function chip(label, cls) {
+                return '<span class="chip' + (cls ? ' ' + cls : '') + '">' + esc(label) + '</span>';
+              }
+
+              function chipRow(values, cls) {
+                if (!values || !values.length) return '<span class="empty-state">&mdash;</span>';
+                return '<div class="chip-row">' + values.map(function (v) { return chip(v, cls); }).join('') + '</div>';
+              }
+
+              function verdictBadgeClass(verdict) {
+                if (verdict === 'EXTRACTION_CANDIDATE') return 'candidate';
+                if (verdict === 'TANGLED') return 'tangled';
+                return 'blocked';
+              }
+
+              // ---- stats ----
+              (function renderStats() {
+                var row = document.getElementById('statRow');
+                var tiles = [
+                  ['Domains', DATA.domains.length],
+                  ['REST endpoints', DATA.restEndpoints.length],
+                  ['Batch/scheduled jobs', DATA.batchJobs.length],
+                  ['Shared tables', DATA.sharedTables.filter(function (t) { return t.count > 1; }).length],
+                  ['Multi-table methods', DATA.multiTableTransactions.length]
+                ];
+                row.innerHTML = tiles.map(function (t) {
+                  return '<div class="stat-tile"><span class="stat-value">' + t[1] + '</span><span class="stat-label">' + esc(t[0]) + '</span></div>';
+                }).join('');
+              })();
+
+              // ---- domains ----
+              (function renderDomains() {
+                var table = document.getElementById('domainsTable');
+                if (!DATA.domains.length) {
+                  table.outerHTML = '<p class="empty-state">No domains found.</p>';
+                  return;
+                }
+                var rows = DATA.domains.map(function (d) {
+                  return '<tr><td class="mono">' + esc(d.name) + '</td><td>' + d.classCount + '</td></tr>';
+                }).join('');
+                table.innerHTML = '<tr><th>Domain</th><th>Classes</th></tr>' + rows;
+              })();
+
+              // ---- extraction ranking ----
+              (function renderExtraction() {
+                var chart = document.getElementById('extractionChart');
+                var table = document.getElementById('extractionTable');
+                var rows = DATA.extractionRanking;
+                if (!rows.length) {
+                  chart.innerHTML = '';
+                  table.outerHTML = '<p class="empty-state">No domain boundary data available.</p>';
+                  return;
+                }
+                var maxEdges = Math.max.apply(null, rows.map(function (r) { return r.crossDomainEdgeCount; }).concat([1]));
+                chart.innerHTML = rows.map(function (r) {
+                  var cls = verdictBadgeClass(r.verdict);
+                  var pct = Math.max(4, Math.round((r.crossDomainEdgeCount / maxEdges) * 100));
+                  return '<div class="bar-row"><span class="bar-name">' + esc(r.domain) + '</span>' +
+                    '<div class="bar-track"><div class="bar-fill ' + cls + '" style="width:' + pct + '%"></div></div>' +
+                    '<span class="bar-value">' + r.crossDomainEdgeCount + '</span></div>';
+                }).join('');
+                table.innerHTML = '<tr><th>Domain</th><th>Verdict</th><th>Classes</th><th>Cross-domain edges</th><th>Reason</th></tr>' +
+                  rows.map(function (r) {
+                    return '<tr><td class="mono">' + esc(r.domain) + '</td><td><span class="badge ' + verdictBadgeClass(r.verdict) + '">' + esc(r.verdict.replace(/_/g, ' ')) + '</span></td>' +
+                      '<td>' + r.classCount + '</td><td>' + r.crossDomainEdgeCount + '</td><td>' + esc(r.reason) + '</td></tr>';
+                  }).join('');
+              })();
+
+              // ---- domain -> tables ----
+              (function renderTablesByDomain() {
+                var table = document.getElementById('tablesByDomainTable');
+                var domains = Object.keys(DATA.tablesByDomain);
+                if (!domains.length) {
+                  table.outerHTML = '<p class="empty-state">No CRUD operations found.</p>';
+                  return;
+                }
+                table.innerHTML = '<tr><th>Domain</th><th>Tables</th></tr>' +
+                  domains.map(function (d) {
+                    return '<tr><td class="mono">' + esc(d) + '</td><td>' + chipRow(DATA.tablesByDomain[d]) + '</td></tr>';
+                  }).join('');
+              })();
+
+              // ---- shared table ranking ----
+              (function renderSharedTables() {
+                var chart = document.getElementById('sharedTablesChart');
+                var table = document.getElementById('sharedTablesTable');
+                var rows = DATA.sharedTables;
+                if (!rows.length) {
+                  chart.innerHTML = '';
+                  table.outerHTML = '<p class="empty-state">No CRUD operations found.</p>';
+                  return;
+                }
+                var maxCount = Math.max.apply(null, rows.map(function (r) { return r.count; }).concat([1]));
+                chart.innerHTML = rows.slice(0, 12).map(function (r) {
+                  var pct = Math.max(4, Math.round((r.count / maxCount) * 100));
+                  return '<div class="bar-row"><span class="bar-name">' + esc(r.table) + '</span>' +
+                    '<div class="bar-track"><div class="bar-fill table" style="width:' + pct + '%"></div></div>' +
+                    '<span class="bar-value">' + r.count + '</span></div>';
+                }).join('');
+                table.innerHTML = '<tr><th>Table</th><th>Entity</th><th>Touching classes</th></tr>' +
+                  rows.map(function (r) {
+                    return '<tr><td class="mono">' + esc(r.table) + '</td><td class="mono">' + esc(r.entity) + '</td><td>' + chipRow(r.classes) + '</td></tr>';
+                  }).join('');
+              })();
+
+              // ---- endpoint flow tables (REST + batch share this renderer) ----
+              function renderEndpointTable(tableId, filterId, rows, firstColumnLabel) {
+                var table = document.getElementById(tableId);
+                var filter = document.getElementById(filterId);
+
+                function rowHtml(r) {
+                  var chainId = 'chain-' + tableId + '-' + Math.random().toString(36).slice(2);
+                  var chainHtml = r.callChain.length
+                    ? '<details class="chain-toggle"><summary>' + r.callChain.length + ' call' + (r.callChain.length === 1 ? '' : 's') + '</summary><div class="call-chain">' +
+                      r.callChain.map(function (c) { return esc(c); }).join('<br>') + '</div></details>'
+                    : '<span class="empty-state">no further calls</span>';
+                  var truncatedNote = r.truncated ? ' <span class="badge tangled">truncated</span>' : '';
+                  return '<tr data-search="' + esc((r.trigger + ' ' + r.className + ' ' + r.methodName + ' ' + r.domain + ' ' +
+                      r.tablesRead.concat(r.tablesWritten, r.tablesCustomQuery).join(' ')).toLowerCase()) + '">' +
+                    '<td class="mono">' + esc(r.trigger) + truncatedNote + '</td>' +
+                    '<td class="mono">' + esc(r.className) + '.' + esc(r.methodName) + '</td>' +
+                    '<td>' + chip(r.domain, 'domain') + '</td>' +
+                    '<td>' + chainHtml + '</td>' +
+                    '<td>' + chipRow(r.tablesRead, 'read') + '</td>' +
+                    '<td>' + chipRow(r.tablesWritten, 'write') + '</td>' +
+                    '<td>' + chipRow(r.tablesCustomQuery, 'custom') + '</td>' +
+                    '</tr>';
+                }
+
+                if (!rows.length) {
+                  table.outerHTML = '<p class="empty-state">None found.</p>';
+                  if (filter) filter.style.display = 'none';
+                  return;
+                }
+
+                var header = '<tr><th>' + firstColumnLabel + '</th><th>Entry point</th><th>Domain</th><th>Call chain</th><th>Reads</th><th>Writes</th><th>Custom query</th></tr>';
+                table.innerHTML = header + rows.map(rowHtml).join('');
+
+                if (filter) {
+                  filter.addEventListener('input', function () {
+                    var q = filter.value.toLowerCase();
+                    Array.prototype.forEach.call(table.querySelectorAll('tr[data-search]'), function (tr) {
+                      tr.style.display = tr.getAttribute('data-search').indexOf(q) === -1 ? 'none' : '';
+                    });
+                  });
+                }
+              }
+
+              renderEndpointTable('restTable', 'restFilter', DATA.restEndpoints, 'Trigger / Path');
+              renderEndpointTable('batchTable', 'batchFilter', DATA.batchJobs, 'Trigger');
+
+              // ---- multi-table transactions ----
+              (function renderTransactions() {
+                var table = document.getElementById('transactionsTable');
+                var rows = DATA.multiTableTransactions;
+                if (!rows.length) {
+                  table.outerHTML = '<p class="empty-state">No single method was found directly touching more than one table.</p>';
+                  return;
+                }
+                table.innerHTML = '<tr><th>Method</th><th>Domain</th><th>Tables</th><th>Entities</th><th>Spans domains?</th></tr>' +
+                  rows.map(function (r) {
+                    return '<tr><td class="mono">' + esc(r.className) + '.' + esc(r.methodName) + '</td>' +
+                      '<td>' + chip(r.domain, 'domain') + '</td>' +
+                      '<td>' + chipRow(r.tables) + '</td>' +
+                      '<td>' + chipRow(r.entities) + '</td>' +
+                      '<td><span class="badge ' + (r.spansMultipleDomains ? 'spans' : 'contained') + '">' + (r.spansMultipleDomains ? 'yes' : 'no') + '</span></td></tr>';
+                  }).join('');
+              })();
+            })();
+            </script>
+            </body>
+            </html>
+            """;
+
+    // ==========================================
     // HTML SUMMARY REPORT
     // ==========================================
 
@@ -1044,6 +1552,11 @@ public class ReportExporter {
                 .append("Interactive, clickable version of the domain graph: ")
                 .append("<a href=\"domain-extraction-map.html\">")
                 .append("domain-extraction-map.html</a>. ")
+                .append("Cross-cutting Q&amp;A (domains, API-to-table traces, ")
+                .append("batch job flows, extraction ranking, multi-table ")
+                .append("transactions): ")
+                .append("<a href=\"insights-report.html\">")
+                .append("insights-report.html</a>. ")
                 .append("Per-entry-point call sequences: ")
                 .append("<code>sequence-diagrams/*.mmd</code> ")
                 .append("(paste a <code>.mmd</code> file into a GitHub markdown ")

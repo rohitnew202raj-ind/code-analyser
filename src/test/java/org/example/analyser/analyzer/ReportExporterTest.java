@@ -17,6 +17,7 @@ import org.example.analyser.model.DomainInfo;
 import org.example.analyser.model.EntryPointBehavior;
 import org.example.analyser.model.EntryPointInfo;
 import org.example.analyser.model.FlowPath;
+import org.example.analyser.model.InsightsReport;
 import org.example.analyser.model.MethodCallInfo;
 import org.example.analyser.model.PersistenceFinding;
 import org.example.analyser.model.PersistenceFindingType;
@@ -39,7 +40,7 @@ class ReportExporterTest {
     void writesAllExpectedFiles(@TempDir Path outputDirectory) throws Exception {
 
         reportExporter.export(
-                outputDirectory, minimalReport(), minimalGraph()
+                outputDirectory, minimalReport(), minimalGraph(), minimalInsights()
         );
 
         assertThat(outputDirectory.resolve("report.json")).exists();
@@ -49,6 +50,7 @@ class ReportExporterTest {
         assertThat(outputDirectory.resolve("domain-graph.mmd")).exists();
         assertThat(outputDirectory.resolve("report.html")).exists();
         assertThat(outputDirectory.resolve("domain-extraction-map.html")).exists();
+        assertThat(outputDirectory.resolve("insights-report.html")).exists();
         assertThat(outputDirectory.resolve("sequence-diagrams")).isDirectory();
     }
 
@@ -57,7 +59,7 @@ class ReportExporterTest {
             @TempDir Path outputDirectory) throws Exception {
 
         reportExporter.export(
-                outputDirectory, minimalReport(), minimalGraph()
+                outputDirectory, minimalReport(), minimalGraph(), minimalInsights()
         );
 
         String html = Files.readString(
@@ -81,7 +83,7 @@ class ReportExporterTest {
             @TempDir Path outputDirectory) throws Exception {
 
         reportExporter.export(
-                outputDirectory, minimalReport(), minimalGraph()
+                outputDirectory, minimalReport(), minimalGraph(), minimalInsights()
         );
 
         String mermaid = Files.readString(
@@ -100,7 +102,7 @@ class ReportExporterTest {
             @TempDir Path outputDirectory) throws Exception {
 
         reportExporter.export(
-                outputDirectory, minimalReport(), minimalGraph()
+                outputDirectory, minimalReport(), minimalGraph(), minimalInsights()
         );
 
         String mermaid = Files.readString(
@@ -132,7 +134,8 @@ class ReportExporterTest {
             );
 
             reportExporter.export(
-                    outputDirectory, report, new DependencyGraph(List.of(), List.of())
+                    outputDirectory, report, new DependencyGraph(List.of(), List.of()),
+                    minimalInsights()
             );
 
             String html = Files.readString(
@@ -157,7 +160,7 @@ class ReportExporterTest {
             @TempDir Path outputDirectory) throws Exception {
 
         reportExporter.export(
-                outputDirectory, minimalReport(), minimalGraph()
+                outputDirectory, minimalReport(), minimalGraph(), minimalInsights()
         );
 
         String html = Files.readString(
@@ -174,7 +177,7 @@ class ReportExporterTest {
             @TempDir Path outputDirectory) throws Exception {
 
         reportExporter.export(
-                outputDirectory, minimalReport(), minimalGraph()
+                outputDirectory, minimalReport(), minimalGraph(), minimalInsights()
         );
 
         String html = Files.readString(
@@ -190,7 +193,7 @@ class ReportExporterTest {
             @TempDir Path outputDirectory) throws Exception {
 
         reportExporter.export(
-                outputDirectory, minimalReport(), minimalGraph()
+                outputDirectory, minimalReport(), minimalGraph(), minimalInsights()
         );
 
         Path sequenceDiagram = outputDirectory
@@ -213,7 +216,7 @@ class ReportExporterTest {
             @TempDir Path outputDirectory) throws Exception {
 
         reportExporter.export(
-                outputDirectory, minimalReport(), minimalGraph()
+                outputDirectory, minimalReport(), minimalGraph(), minimalInsights()
         );
 
         String html = Files.readString(
@@ -229,7 +232,7 @@ class ReportExporterTest {
             @TempDir Path outputDirectory) throws Exception {
 
         reportExporter.export(
-                outputDirectory, minimalReport(), minimalGraph()
+                outputDirectory, minimalReport(), minimalGraph(), minimalInsights()
         );
 
         String html = Files.readString(
@@ -239,6 +242,13 @@ class ReportExporterTest {
         assertThat(html).contains("PaymentGateway");
         assertThat(html).contains("badge-ambiguous");
         assertThat(html).contains("StripePaymentGateway");
+    }
+
+    private InsightsReport minimalInsights() {
+
+        return new InsightsReport(
+                List.of(), List.of(), Map.of(), List.of(), List.of(), List.of()
+        );
     }
 
     private DependencyGraph minimalGraph() {

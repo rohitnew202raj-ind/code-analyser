@@ -8,6 +8,7 @@ import com.github.javaparser.ast.body.TypeDeclaration;
 
 import org.example.analyser.analyzer.AnnotationNames;
 import org.example.analyser.analyzer.ApiAnalyzer;
+import org.example.analyser.analyzer.ArchitectureInsightsAnalyzer;
 import org.example.analyser.analyzer.BatchAnalyzer;
 import org.example.analyser.analyzer.BeanResolutionAnalyzer;
 import org.example.analyser.analyzer.CircularDependencyAnalyzer;
@@ -51,6 +52,7 @@ import org.example.analyser.model.DomainCycle;
 import org.example.analyser.model.DomainDependency;
 import org.example.analyser.model.DomainExtractionResult;
 import org.example.analyser.model.DomainInfo;
+import org.example.analyser.model.InsightsReport;
 import org.example.analyser.model.EntityMutationInfo;
 import org.example.analyser.model.EntryPointBehavior;
 import org.example.analyser.model.EntryPointInfo;
@@ -110,6 +112,7 @@ public class AnalyzerRunner implements CommandLineRunner {
     private final SharedEntityHotspotAnalyzer sharedEntityHotspotAnalyzer;
     private final SpringBatchBuilderAnalyzer springBatchBuilderAnalyzer;
     private final WebFluxRouterAnalyzer webFluxRouterAnalyzer;
+    private final ArchitectureInsightsAnalyzer architectureInsightsAnalyzer;
     private final ReportExporter reportExporter;
 
     public AnalyzerRunner(
@@ -145,6 +148,7 @@ public class AnalyzerRunner implements CommandLineRunner {
             SharedEntityHotspotAnalyzer sharedEntityHotspotAnalyzer,
             SpringBatchBuilderAnalyzer springBatchBuilderAnalyzer,
             WebFluxRouterAnalyzer webFluxRouterAnalyzer,
+            ArchitectureInsightsAnalyzer architectureInsightsAnalyzer,
             ReportExporter reportExporter) {
 
         this.projectScanner = projectScanner;
@@ -179,6 +183,7 @@ public class AnalyzerRunner implements CommandLineRunner {
         this.sharedEntityHotspotAnalyzer = sharedEntityHotspotAnalyzer;
         this.springBatchBuilderAnalyzer = springBatchBuilderAnalyzer;
         this.webFluxRouterAnalyzer = webFluxRouterAnalyzer;
+        this.architectureInsightsAnalyzer = architectureInsightsAnalyzer;
         this.reportExporter = reportExporter;
     }
 
@@ -584,6 +589,20 @@ public class AnalyzerRunner implements CommandLineRunner {
                 );
 
         // ======================================
+        // STEP 9c: ARCHITECTURE INSIGHTS
+        //
+        // Cross-cutting questions ("what does this API touch",
+        // "which domain owns this table", "what's cheapest to
+        // extract first") answered by re-querying data already
+        // computed above - no new parsing.
+        // ======================================
+
+        InsightsReport insightsReport =
+                architectureInsightsAnalyzer.analyze(
+                        domains, domainBoundaries, flows, crudOperations
+                );
+
+        // ======================================
         // STEP 10: EXPORT (JSON + DOT)
         // ======================================
 
@@ -614,7 +633,8 @@ public class AnalyzerRunner implements CommandLineRunner {
             reportExporter.export(
                     outputDirectory,
                     report,
-                    dependencyGraph
+                    dependencyGraph,
+                    insightsReport
             );
 
             System.out.println();

@@ -550,6 +550,74 @@ everything, honestly reporting "no signal" rather than guessing.
 The class-name suffix list is also English-convention-specific; a
 codebase that doesn't follow it gets nothing from that strategy.
 
+## Architecture Insights: cross-cutting Q&A report
+
+`ArchitectureInsightsAnalyzer` + `insights-report.html` answer a
+set of decomposition-planning questions in one page, all derived
+from data the pipeline already computes (`DomainInfo`, `FlowPath`,
+`CrudOperationInfo`, `DomainBoundaryInfo`) - no new parsing, just
+new questions asked of existing facts, same approach as the
+Architecture/Domain/Persistence Intelligence checks:
+
+- **What domains exist** - the existing `domains` list, unchanged.
+- **Which table does a given API/batch job touch, and what's its
+  full call chain** - one `EndpointFlowSummary` per entry point,
+  built directly from `FlowPath`: the ordered call chain
+  (`Controller.method -> Service.method -> Repository.method`) and
+  every table it reads/writes/hits with an unclassifiable
+  operation, split into two tables in the report (REST endpoints
+  vs. batch/scheduled jobs) by `TriggerType`.
+- **Which domain is connected to which table** - grouped by the
+  *calling* class's domain, not the entity's, so a domain calling
+  into another domain's table still shows up under its own row -
+  exposing that coupling instead of hiding it behind the entity's
+  own domain.
+- **Which table is shared by the most services** - every table
+  ranked by distinct touching-class count, descending. This is
+  deliberately a full open ranking, not `SharedEntityHotspotAnalyzer`'s
+  threshold-filtered finding (`>= 3` classes) - the report shows
+  the whole picture, the console finding flags only what crosses
+  the fixed cutoff.
+- **Which domain is cheapest/safest to extract first** - the
+  existing `domainBoundaries` data, re-sorted: extraction
+  candidates first (by their own cross-domain edge count,
+  ascending), then tangled domains, then cycle-blocked domains
+  last regardless of their raw edge count, since a cycle has to be
+  broken before extraction is even on the table.
+- **Which methods touch multiple tables in one call (saga
+  candidates)** - new: `CrudOperationInfo` grouped by
+  `(sourceClass, sourceMethod)`; a method whose own body's CRUD
+  calls hit 2+ distinct tables is flagged as a
+  `MultiTableTransaction`, additionally marked
+  `spansMultipleDomains` when those tables' entities belong to more
+  than one domain. **Scope, explicitly** (see
+  `MultiTableTransaction`'s javadoc): this looks only at a
+  method's own direct repository calls, not `@Transactional`
+  propagation into methods it calls in turn, and does not
+  distinguish an explicitly `@Transactional` method from one that
+  merely happens to touch multiple tables with no transaction
+  boundary at all - both are flagged identically, since the
+  multi-table fact is what matters for a future split regardless of
+  whether a transaction annotation is present today.
+
+`insights-report.html` is a third purpose-built HTML page (after
+`report.html` and `domain-extraction-map.html`), same
+self-contained/no-external-library approach: the answers above are
+embedded as one JSON payload and rendered client-side, so it opens
+directly from disk. Two of the eight questions (shared-table usage,
+extraction ranking) get a hand-rolled horizontal bar chart, since
+those are naturally rankable; everything else is a table, with a
+text filter on the REST/batch endpoint tables since a real project
+can have dozens to hundreds of entry points.
+
+Verified end-to-end by running the built jar against this
+repository's own `synthetic-monolith` fixture: the shared-table
+ranking correctly put `order` first (4 touching classes, matching
+`SharedEntityHotspotAnalyzer`'s existing finding), the extraction
+ranking correctly put `inventory` (the one `EXTRACTION_CANDIDATE`)
+first and the two `BLOCKED_BY_CYCLE` domains (`order`, `payment`)
+last, and REST/batch entry points split correctly by trigger type.
+
 ## Export upgrade: Mermaid and HTML report
 
 `ReportExporter` now writes two additional formats alongside the
