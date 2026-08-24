@@ -680,6 +680,46 @@ change (only the interface-based and `main()`-based paths were
 tested); added a single test asserting all six map to their
 correct, distinct `TriggerType`.
 
+## Classification confidence: annotation vs. structural vs. guessed
+
+`ClassInfo.type` has always been determined by a mix of evidence
+of very different reliability - a class directly annotated
+`@Service` is unambiguous, while a class classified `DTO` purely
+because its name ends in `Dto` is a guess that a class like
+`OrderDtoValidator` would already defeat. Both were reported
+identically before this change, with no way for a `report.json`
+consumer to tell them apart.
+
+`ClassInfo.typeSource` (a new `ClassificationSource` enum) now
+records which kind of evidence actually produced `type`:
+
+- `ANNOTATION` - carries the deciding Spring stereotype directly
+  or through a composed/meta annotation.
+- `STRUCTURAL` - an AST-confirmed fact that isn't an annotation:
+  extending a known Spring Data repository interface with no
+  `@Repository` of its own, extending a known exception
+  supertype, or literally being an `interface` declaration.
+  Deliberately distinguished from `ANNOTATION` (different kind of
+  evidence) but still high confidence.
+- `NAMING_HEURISTIC` - matched a name suffix (`*Dto`, `*Event`,
+  `*Utils`, ...) because nothing stronger was found. Lower
+  confidence, and the one place false positives/negatives are
+  expected.
+- `NONE` - the `POJO` catch-all: no annotation, structural fact,
+  or naming pattern matched anything. Tagged separately from
+  `NAMING_HEURISTIC` since no heuristic actually fired to produce
+  it - it's the honest "nothing matched" default, not a guess
+  that happened to be wrong.
+
+One subtlety worth calling out explicitly: `REPOSITORY` and
+`EXCEPTION` can each be reached by *either* an annotation/
+naming-only path *or* a structural one (extending
+`JpaRepository`/`CrudRepository`/etc. with no `@Repository`
+annotation; extending a known exception supertype vs. only
+matching the `*Exception` name suffix). `SpringComponentAnalyzer`
+now distinguishes these per-class rather than reporting every
+repository or exception as equally confirmed.
+
 ## Parallelization scope
 
 Only the first pass (parsing + per-class structural analysis)

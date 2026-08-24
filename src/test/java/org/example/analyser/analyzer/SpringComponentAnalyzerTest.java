@@ -1,5 +1,6 @@
 package org.example.analyser.analyzer;
 
+import org.example.analyser.model.ClassificationSource;
 import org.example.analyser.model.ClassInfo;
 import org.junit.jupiter.api.Test;
 
@@ -20,6 +21,8 @@ class SpringComponentAnalyzerTest {
         analyzer.classify(classInfo, MetaAnnotationResolver.EMPTY);
 
         assertThat(classInfo.getType()).isEqualTo("SERVICE");
+        assertThat(classInfo.getTypeSource())
+                .isEqualTo(ClassificationSource.ANNOTATION);
     }
 
     @Test
@@ -31,6 +34,8 @@ class SpringComponentAnalyzerTest {
         analyzer.classify(classInfo, MetaAnnotationResolver.EMPTY);
 
         assertThat(classInfo.getType()).isEqualTo("DTO");
+        assertThat(classInfo.getTypeSource())
+                .isEqualTo(ClassificationSource.NAMING_HEURISTIC);
     }
 
     @Test
@@ -54,6 +59,8 @@ class SpringComponentAnalyzerTest {
         analyzer.classify(classInfo, MetaAnnotationResolver.EMPTY);
 
         assertThat(classInfo.getType()).isEqualTo("EXCEPTION");
+        assertThat(classInfo.getTypeSource())
+                .isEqualTo(ClassificationSource.STRUCTURAL);
     }
 
     @Test
@@ -65,6 +72,11 @@ class SpringComponentAnalyzerTest {
         analyzer.classify(classInfo, MetaAnnotationResolver.EMPTY);
 
         assertThat(classInfo.getType()).isEqualTo("EXCEPTION");
+
+        // Name suffix only, no resolved supertype - a guess,
+        // not a confirmed structural fact.
+        assertThat(classInfo.getTypeSource())
+                .isEqualTo(ClassificationSource.NAMING_HEURISTIC);
     }
 
     @Test
@@ -113,6 +125,11 @@ class SpringComponentAnalyzerTest {
         analyzer.classify(classInfo, MetaAnnotationResolver.EMPTY);
 
         assertThat(classInfo.getType()).isEqualTo("INTERFACE");
+
+        // Being an `interface` at all is a confirmed AST fact,
+        // not a name-based guess.
+        assertThat(classInfo.getTypeSource())
+                .isEqualTo(ClassificationSource.STRUCTURAL);
     }
 
     @Test
@@ -126,5 +143,41 @@ class SpringComponentAnalyzerTest {
         assertThat(classInfo.getType())
                 .isEqualTo("POJO")
                 .isNotEqualTo("UNKNOWN");
+
+        // No heuristic actually fired to produce POJO - it's
+        // the last-resort default, not a guess that missed.
+        assertThat(classInfo.getTypeSource())
+                .isEqualTo(ClassificationSource.NONE);
+    }
+
+    @Test
+    void classifiesRepositoryAnnotatedInterfaceAsAnnotationSourced() {
+
+        ClassInfo classInfo = new ClassInfo();
+        classInfo.setName("OrderRepository");
+        classInfo.getAnnotationSimpleNames().add("Repository");
+
+        analyzer.classify(classInfo, MetaAnnotationResolver.EMPTY);
+
+        assertThat(classInfo.getType()).isEqualTo("REPOSITORY");
+        assertThat(classInfo.getTypeSource())
+                .isEqualTo(ClassificationSource.ANNOTATION);
+    }
+
+    @Test
+    void classifiesRepositoryExtendingJpaRepositoryAsStructurallySourced() {
+
+        // No @Repository annotation at all - Spring Data derives
+        // the bean purely from extending the marker interface,
+        // so this is a structural fact, not an annotation match.
+        ClassInfo classInfo = new ClassInfo();
+        classInfo.setName("OrderRepository");
+        classInfo.getExtendedTypes().add("JpaRepository");
+
+        analyzer.classify(classInfo, MetaAnnotationResolver.EMPTY);
+
+        assertThat(classInfo.getType()).isEqualTo("REPOSITORY");
+        assertThat(classInfo.getTypeSource())
+                .isEqualTo(ClassificationSource.STRUCTURAL);
     }
 }

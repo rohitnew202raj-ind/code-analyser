@@ -598,7 +598,8 @@ public class AnalyzerRunner implements CommandLineRunner {
             System.out.println("--------------------------------------");
             System.out.println("CLASS: " + classInfo.getName());
             System.out.println("PACKAGE: " + classInfo.getPackageName());
-            System.out.println("TYPE: " + classInfo.getType());
+            System.out.println("TYPE: " + classInfo.getType()
+                    + " (" + classInfo.getTypeSource() + ")");
             System.out.println("ROLES: " + classInfo.getRoles());
 
             System.out.println("ANNOTATIONS:");

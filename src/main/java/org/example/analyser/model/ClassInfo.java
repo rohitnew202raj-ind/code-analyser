@@ -13,6 +13,13 @@ public class ClassInfo {
     private boolean interfaceDeclaration;
 
     /*
+     * How `type` was determined - see ClassificationSource. Set
+     * by SpringComponentAnalyzer alongside `type` itself; null
+     * only before classification has run.
+     */
+    private ClassificationSource typeSource;
+
+    /*
      * Classes can legitimately carry more than one Spring
      * "role" (e.g. a @Component that is also @Aspect).
      * `type` stays the single primary classification used
@@ -126,6 +133,14 @@ public class ClassInfo {
 
     public void setType(String type) {
         this.type = type;
+    }
+
+    public ClassificationSource getTypeSource() {
+        return typeSource;
+    }
+
+    public void setTypeSource(ClassificationSource typeSource) {
+        this.typeSource = typeSource;
     }
 
     public boolean isInterfaceDeclaration() {
