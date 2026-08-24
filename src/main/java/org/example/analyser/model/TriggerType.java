@@ -54,5 +54,20 @@ public enum TriggerType {
     RABBIT_CONSUMER,
     SPRING_BATCH_STEP_COMPONENT,
     STARTUP_RUNNER,
-    MAIN_ENTRY_POINT
+    MAIN_ENTRY_POINT,
+
+    /**
+     * A {@code @Bean} method building a {@code Job} via
+     * {@code new JobBuilder(...)} - the modern Spring Batch
+     * configuration style, as opposed to a class directly
+     * implementing {@code Tasklet}/{@code ItemReader}/etc. (see
+     * {@code SPRING_BATCH_STEP_COMPONENT}).
+     */
+    SPRING_BATCH_JOB_BUILDER,
+
+    /**
+     * A {@code @Bean} method building a {@code Step} via
+     * {@code new StepBuilder(...)}.
+     */
+    SPRING_BATCH_STEP_BUILDER
 }

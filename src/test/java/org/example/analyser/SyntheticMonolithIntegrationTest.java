@@ -208,6 +208,19 @@ class SyntheticMonolithIntegrationTest {
                 .contains("GET", "POST", "SCHEDULED");
     }
 
+    @Test
+    void discoversWebFluxFunctionalRoutesAndSpringBatchBuilders() {
+
+        assertThat(fieldValues(report.get("entryPoints"), "triggerType"))
+                .contains(
+                        "SPRING_BATCH_JOB_BUILDER",
+                        "SPRING_BATCH_STEP_BUILDER"
+                );
+
+        assertThat(fieldValues(report.get("entryPoints"), "className"))
+                .contains("OrderHandler");
+    }
+
     private List<String> fieldValues(JsonNode array, String fieldName) {
 
         List<String> values = new ArrayList<>();

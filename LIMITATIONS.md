@@ -761,6 +761,55 @@ an interface without carrying a stereotype of its own (a test
 double, a manually-instantiated helper) is excluded, since it
 isn't a bean Spring would ever actually choose between.
 
+## WebFlux functional routing and Spring Batch builder detection
+
+Two entry-point gaps `ApiAnalyzer`/`BatchAnalyzer` were structurally
+unable to close, both closed by adding a dedicated analyzer rather
+than stretching an existing one to cover a shape it wasn't built
+for.
+
+**`WebFluxRouterAnalyzer`** finds WebFlux functional endpoints -
+`RouterFunction` beans built via `RouterFunctions.route()`'s
+fluent builder (`.GET(path, handler)`, `.POST(path, handler)`,
+...). `ApiAnalyzer` only recognizes annotation-based endpoints
+(`@GetMapping` et al.); functional routing declares no annotations
+on the handler methods at all, so it was previously entirely
+invisible. **Scope, explicitly**: only the modern builder-style
+chain is recognized, not the older `route(predicate, handler)
+.andRoute(...)` chain or `.nest(...)` composition. Only a method
+*reference* handler (`handler::getOrder`) produces an entry point;
+an inline lambda handler carries no method name to report one
+against, so those routes are silently skipped, not guessed at.
+One JavaParser quirk worth recording: the left side of `X::method`
+always parses as a `TypeExpr`, never a `NameExpr`, even when `X` is
+a lowercase local variable/parameter rather than an actual type -
+`handlerReference.getScope()` has to be read as a `TypeExpr` and
+its type's text used as the variable name, not matched against
+`NameExpr` as every other method-reference-adjacent lookup in this
+codebase does.
+
+**`SpringBatchBuilderAnalyzer`** finds Spring Batch jobs/steps
+assembled via `new JobBuilder(...)`/`new StepBuilder(...)` inside
+a `@Bean` method - exactly the gap `BatchAnalyzer`'s own javadoc
+already called out as unsolved (it only recognizes a class
+directly implementing `Tasklet`/`ItemReader`/etc., not a builder
+chain assembled inside a `@Configuration` method body).
+**Scope, explicitly**: this only makes the job/step *visible* as
+an entry point (class/method/domain) - it does not trace which
+`ItemReader`/`ItemProcessor`/`ItemWriter` beans a step actually
+wires. That would mean following each builder call's arguments
+back to the parameter/field that produced them - a data-flow
+problem, not a per-node AST check, and a real, larger follow-up
+left for a later phase.
+
+Verified end-to-end against the synthetic-monolith fixture: an
+`OrderRouterConfig` with two functional routes correctly produced
+`OrderHandler.getOrder`/`OrderHandler.createOrder` entry points
+(and correctly excluded `OrderHandler` from `DEAD_COMPONENT`, since
+it's now a recognized entry point owner), and an `OrderBatchConfig`
+correctly produced `SPRING_BATCH_JOB_BUILDER`/
+`SPRING_BATCH_STEP_BUILDER` entries.
+
 ## Parallelization scope
 
 Only the first pass (parsing + per-class structural analysis)

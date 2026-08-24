@@ -35,7 +35,9 @@ import org.example.analyser.analyzer.RepositoryInheritanceResolver;
 import org.example.analyser.analyzer.ReportExporter;
 import org.example.analyser.analyzer.RuntimeDependencyAnalyzer;
 import org.example.analyser.analyzer.SharedEntityHotspotAnalyzer;
+import org.example.analyser.analyzer.SpringBatchBuilderAnalyzer;
 import org.example.analyser.analyzer.SpringComponentAnalyzer;
+import org.example.analyser.analyzer.WebFluxRouterAnalyzer;
 
 import org.example.analyser.model.ArchitectureFinding;
 import org.example.analyser.model.BeanResolution;
@@ -102,6 +104,8 @@ public class AnalyzerRunner implements CommandLineRunner {
     private final DomainBoundaryAnalyzer domainBoundaryAnalyzer;
     private final NPlusOneQueryAnalyzer nPlusOneQueryAnalyzer;
     private final SharedEntityHotspotAnalyzer sharedEntityHotspotAnalyzer;
+    private final SpringBatchBuilderAnalyzer springBatchBuilderAnalyzer;
+    private final WebFluxRouterAnalyzer webFluxRouterAnalyzer;
     private final ReportExporter reportExporter;
 
     public AnalyzerRunner(
@@ -134,6 +138,8 @@ public class AnalyzerRunner implements CommandLineRunner {
             DomainBoundaryAnalyzer domainBoundaryAnalyzer,
             NPlusOneQueryAnalyzer nPlusOneQueryAnalyzer,
             SharedEntityHotspotAnalyzer sharedEntityHotspotAnalyzer,
+            SpringBatchBuilderAnalyzer springBatchBuilderAnalyzer,
+            WebFluxRouterAnalyzer webFluxRouterAnalyzer,
             ReportExporter reportExporter) {
 
         this.projectScanner = projectScanner;
@@ -165,6 +171,8 @@ public class AnalyzerRunner implements CommandLineRunner {
         this.domainBoundaryAnalyzer = domainBoundaryAnalyzer;
         this.nPlusOneQueryAnalyzer = nPlusOneQueryAnalyzer;
         this.sharedEntityHotspotAnalyzer = sharedEntityHotspotAnalyzer;
+        this.springBatchBuilderAnalyzer = springBatchBuilderAnalyzer;
+        this.webFluxRouterAnalyzer = webFluxRouterAnalyzer;
         this.reportExporter = reportExporter;
     }
 
@@ -339,6 +347,23 @@ public class AnalyzerRunner implements CommandLineRunner {
                     batchAnalyzer.analyze(
                             parsedClass.declaration(),
                             parsedClass.classInfo(),
+                            domainExtractor
+                    )
+            );
+
+            entryPoints.addAll(
+                    springBatchBuilderAnalyzer.analyze(
+                            parsedClass.declaration(),
+                            parsedClass.classInfo(),
+                            domainExtractor
+                    )
+            );
+
+            entryPoints.addAll(
+                    webFluxRouterAnalyzer.analyze(
+                            parsedClass.declaration(),
+                            parsedClass.classInfo(),
+                            classes,
                             domainExtractor
                     )
             );
