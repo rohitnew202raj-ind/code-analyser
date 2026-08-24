@@ -442,7 +442,113 @@ without project-specific configuration; this fix only prevents one
 specific, previously-undocumented data-loss pattern (multiple real
 layers silently merging into one bucket because of an intervening
 wrapper package), not the broader "layered packaging carries no
-domain signal" limitation already noted above.
+domain signal" limitation - which the strategy-selection system
+below now addresses using two other signals instead of packages.
+
+## Domain extraction as a 3-way confidence vote
+
+`DomainAnalyzer` no longer trusts package structure alone. A purely
+layered project (`controller`/`service`/`entity`/`repository`
+packages with no business-domain segment at any depth - the case
+above, and the shape of a real project, `messy-hospital`, that
+prompted this) genuinely has no domain signal left in its packages
+for `PackageDomainExtractor` to find, wrapper-skip or not. But that
+kind of project usually still carries the signal somewhere else: in
+how classes are *named* (`PatientController`, `PatientService`,
+`PatientRepository` are still named consistently even sitting in
+flat `controller`/`service`/`repository` packages), or in what
+they *do* (a controller, its service, and the repository it calls
+all touch the same entity/table, whatever they're named or where
+they live).
+
+So `DomainAnalyzer` now runs three independent extraction
+strategies over every scanned class, scores each one's confidence
+in [0, 1], and uses whichever strategy scored highest for the
+*entire* project - deliberately not mixed per-class, so the result
+stays one coherent, explainable grouping rather than a patchwork:
+
+- **`PackageDomainExtractor`** (structural, unchanged from the
+  section above). Confidence = fraction of the domains it produced
+  that are real business names rather than technical-layer words
+  (`controller`, `service`, ...) or its own `core` fallback. All
+  real -> 1.0; all generic -> 0.0, the exact signal that packages
+  carry nothing.
+- **`ClassNameDomainExtractor`** (new - naming). Strips a fixed,
+  ordered list of ~40 technical-layer suffixes
+  (`Controller`, `ServiceImpl`, `Repository`, `Entity`, `DTO`,
+  `Config`, `Exception`, `Handler`, ... - longest match first, so
+  `ServiceImpl` is matched before the shorter `Impl` would grab it
+  and leave a misleading remainder) off a class's simple name;
+  `PatientController` / `PatientService` / `PatientRepository` all
+  reduce to `Patient`. Confidence = coverage (fraction of classes
+  that matched a suffix at all) multiplied by clustering strength
+  (fraction of those matches that landed in a shared, non-singleton
+  domain rather than a one-off) - both have to hold, since every
+  class matching a suffix but each producing its own unique domain
+  is not actually a cluster.
+- **`EntityUsageDomainExtractor`** (new - behavioral). Reuses
+  `CrudAnalyzer`'s existing CRUD data (no new parsing) to cluster a
+  controller/service/repository/entity group by which entity/table
+  they actually share, regardless of naming or packaging. A class
+  touching more than one entity is assigned to whichever it touches
+  most, ties broken by whichever it touched first - a deliberate
+  simplification, since a genuinely cross-domain orchestrator
+  doesn't have one "true" home. Confidence = fraction of all
+  scanned classes this strategy could assign at all (classes with
+  no persistence involvement - config beans, pure orchestration,
+  DTOs never seen in a CRUD call - get no answer from this
+  strategy).
+
+Ties are broken package-based > entity-usage > class-name -
+preferring the signal that requires the fewest assumptions (raw
+structure) over the one grounded in the weakest assumption of the
+three (a team's naming convention actually being consistent) when
+confidence alone doesn't distinguish them. Whichever strategy wins,
+a class it has no answer for still falls back to `core`, same
+fallback `PackageDomainExtractor` has always used - so `core` means
+"no strategy found a signal for this specific class," not an error.
+The winning strategy's name and all three confidence scores are
+threaded through to `report.json` (`domainExtractionStrategy`,
+`domainExtractionConfidence`) and printed above the console DOMAIN
+INVENTORY, so the choice is visible rather than a silent black box -
+the same "honest reasoning" pattern `DomainBoundaryAnalyzer` already
+uses for its own verdicts.
+
+Verified end-to-end: a hand-built fixture with hospital-style flat
+`controller`/`service`/`repository`/`entity` packages but
+domain-named classes (`PatientController`/`PatientService`/...,
+`BillingController`/`BillingService`/...) - package-based scored
+0.0, class-name scored 1.0 and won, correctly recovering `Patient`
+and `Billing` as 4-class domains each. The earlier DFIR-shaped
+wrapper-package fixture (see the section above) still resolves via
+package-based, confirming the new selection logic doesn't regress
+the case the wrapper-skip fix was built for.
+
+KNOWN INCONSISTENCY (documented, not fixed): entry-point domain
+tags shown in `ENTRY POINT INVENTORY`/flows (e.g. the `[order]` in
+`POST /orders -> OrderController.create [order]`) are still
+produced by a raw `PackageDomainExtractor` computed early in the
+pipeline, before CRUD data exists to run this selection - moving
+that would mean threading a per-class domain lookup through four
+more analyzers (`BatchAnalyzer`, `SpringBatchBuilderAnalyzer`,
+`WebFluxRouterAnalyzer`, `ApiAnalyzer`) and reordering pipeline
+steps that currently have their own sequencing constraints (method
+calls must resolve before CRUD data can exist). On a project where
+class-name or entity-usage wins the vote, an entry point's printed
+domain tag can therefore differ from which `DOMAIN INVENTORY` bucket
+that same controller class ends up grouped into further down the
+same report.
+
+LIMITATION (documented, not solved): all three strategies are
+heuristics over the same underlying ambiguity - "domain" is a
+business concept a static analyzer cannot truly know, only infer
+from proxies (structure, naming, behavior). A project that defeats
+all three at once - technical packages, non-descriptive class
+names, and no persistence layer at all (a pure orchestration or
+messaging service, say) - still bottoms out at `core` for
+everything, honestly reporting "no signal" rather than guessing.
+The class-name suffix list is also English-convention-specific; a
+codebase that doesn't follow it gets nothing from that strategy.
 
 ## Export upgrade: Mermaid and HTML report
 

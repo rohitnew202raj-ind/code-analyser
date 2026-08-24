@@ -49,6 +49,7 @@ import org.example.analyser.model.DependencyInfo;
 import org.example.analyser.model.DomainBoundaryInfo;
 import org.example.analyser.model.DomainCycle;
 import org.example.analyser.model.DomainDependency;
+import org.example.analyser.model.DomainExtractionResult;
 import org.example.analyser.model.DomainInfo;
 import org.example.analyser.model.EntityMutationInfo;
 import org.example.analyser.model.EntryPointBehavior;
@@ -554,8 +555,11 @@ public class AnalyzerRunner implements CommandLineRunner {
         // STEP 9: DOMAINS
         // ======================================
 
+        DomainExtractionResult domainExtractionResult =
+                domainAnalyzer.analyze(classes, crudOperations);
+
         List<DomainInfo> domains =
-                domainAnalyzer.analyze(classes);
+                domainExtractionResult.getDomains();
 
         List<DomainDependency> domainDependencies =
                 domainDependencyAnalyzer.analyze(domains, dependencies);
@@ -600,7 +604,9 @@ public class AnalyzerRunner implements CommandLineRunner {
                         domainBoundaries,
                         persistenceFindings,
                         entryPointBehaviors,
-                        beanResolutions
+                        beanResolutions,
+                        domainExtractionResult.getStrategy(),
+                        domainExtractionResult.getStrategyConfidence()
                 );
 
         try {
@@ -763,6 +769,15 @@ public class AnalyzerRunner implements CommandLineRunner {
         System.out.println("======================================");
         System.out.println("          DOMAIN INVENTORY");
         System.out.println("======================================");
+
+        System.out.println();
+        System.out.println(
+                "Grouping strategy: "
+                        + domainExtractionResult.getStrategy()
+                        + " (confidence scores: "
+                        + domainExtractionResult.getStrategyConfidence()
+                        + ")"
+        );
 
         for (DomainInfo domain : domains) {
 
