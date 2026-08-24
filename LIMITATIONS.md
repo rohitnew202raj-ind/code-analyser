@@ -821,3 +821,127 @@ access. Given the first pass is the more expensive one at real
 project scale (full AST construction for every file), this is
 where parallelization pays off without risking subtle
 concurrency bugs in a component this codebase doesn't control.
+
+## FIELDS and METHODS are now structured data, not strings
+
+`ClassInfo.fields` and `ClassInfo.methods` used to be
+`List<String>` - each entry a pre-formatted line like
+`"private String apiKey"`, built once at parse time and then
+re-parsed (or just pattern-matched) by anything downstream that
+needed the field's actual type or name. `TypeResolver.resolveFieldType`
+was the worst offender: ~50 lines of manual tokenizing to pull a
+type back out of that string on every call.
+
+Both are now `List<FieldInfo>` / `List<MethodInfo>`, dedicated
+model classes carrying `name`, `type`/`returnType`, modifiers
+(`isStatic`, `isFinal` on fields), and now - for the first time
+in this codebase - the field's or method's own annotations
+(`annotations` as written, `annotationSimpleNames` for matching),
+plus a method's parameters as `List<ParameterInfo>`. No analyzer
+consumes method-level annotations yet; this just makes future
+checks (e.g. "this endpoint method has no `@Transactional`")
+possible without another model change.
+
+**Deliberate scope narrowing, not an oversight:** `FieldInfo`
+never captures a field's initializer expression - only its
+declared type and name. The old string-based FIELDS output used
+to include initializer literals, and there used to be a
+`redactIfSecret` regex step in `ClassAnalyzer` to blank out
+anything that looked like an API key or password before it hit
+console/JSON output. That whole redaction step is gone now, not
+because it was buggy, but because it's no longer needed: nothing
+in the new representation can capture a secret literal in the
+first place. `ClassAnalyzerTest.structuredFieldsNeverCaptureInitializerValues`
+asserts this property directly (a field initialized to a
+`"sk-live-..."`-shaped string comes back with no trace of the
+value), rather than testing that redaction fires correctly.
+
+**Silent-bug risk this migration created, and how it was closed:**
+`List<T>.contains(Object)` accepts any `Object`, so
+`sourceClass.getMethods().contains(call.getNameAsString())` in
+`MethodCallAnalyzer` kept compiling cleanly after the model
+change but would have always returned `false` at runtime (a
+`MethodInfo` never `.equals()` a `String`) - silently breaking
+same-class method-call resolution with zero test or compiler
+signal. Found by re-grepping every `.getFields()`/`.getMethods()`
+call site across the whole codebase after the model change,
+rather than trusting a clean compile. Fixed by adding
+`ClassInfo.hasMethodNamed(String)` and using it in place of the
+broken `.contains(...)` call.
+
+## Type resolution: what got centralized, and what didn't
+
+`TypeResolver.isApplicationClass(String, List<ClassInfo>)` is
+now the single implementation of "is this type name one of the
+classes we scanned, as opposed to a JDK/library type" - it used
+to be copy-pasted verbatim in both `MethodCallAnalyzer` and
+`RuntimeDependencyAnalyzer`. Centralizing an exact duplicate is a
+clear win: one implementation to test, one place to fix if the
+definition of "application class" ever needs to change.
+
+**Deliberately left alone:** a few other places do something
+*similar* - `CrudAnalyzer.findEntityForRepository`'s
+naming-convention guess-fallback, and `CrudAnalyzer.findClass`
+plus `WebFluxRouterAnalyzer.packageOf`'s small "find by name"
+helpers. None of these are the same logic as
+`isApplicationClass`, just superficially alike (all iterate
+`List<ClassInfo>` looking for a name match). Forcing them into a
+shared abstraction would either weaken `isApplicationClass`'s own
+contract to accommodate `CrudAnalyzer`'s guessing behavior, or add
+an abstraction layer to save a handful of lines in helpers that
+are already trivial to read in place. Not worth the test blast
+radius (`CrudAnalyzer` in particular) for the value gained - so
+they stay as they are.
+
+## Dependency-jar resolution for Symbol Solver (Maven only)
+
+The Symbol Solver (see "Symbol Solver: what it does and doesn't
+reach" above) used to only ever see the target project's own
+source roots plus the JDK's own classes (`ReflectionTypeSolver`).
+Every external framework type - `JpaRepository`, `ResponseEntity`,
+anything from Spring, JPA, or any other dependency - always fell
+through to source-text/AST heuristics, never a real resolved
+type, because the solver had no jars to look in.
+
+`MavenDependencyResolver` closes part of that gap by shelling out
+to `mvn --batch-mode --quiet dependency:build-classpath` against
+the target project's own `pom.xml` - the same goal a developer
+would run by hand - and feeding the resulting jar paths into a
+`JarTypeSolver` added to the existing `CombinedTypeSolver`. It
+deliberately does not reimplement Maven's own dependency
+resolution (transitive versions, exclusions, scope rules,
+dependency management inheritance); getting that right is Maven's
+job, not this analyzer's.
+
+**Scope, stated plainly:**
+
+- **Maven-only.** A Gradle target project resolves zero
+  dependency jars through this path (see "Gradle" limitations
+  elsewhere in this file); doing the equivalent for Gradle is a
+  separate, larger effort.
+- **Local-cache-only, no network fetch.** This only ever reads
+  jars already present in the local Maven repository (typically
+  `~/.m2/repository`). If the target project has never been built
+  in this environment, its dependencies aren't cached yet, and
+  resolution returns nothing - not a fetch-and-wait, just an
+  empty list.
+- **Root `pom.xml` only.** A multi-module reactor's per-submodule
+  dependencies aren't separately aggregated - only the root POM is
+  resolved. For a single-module project (or a root module with
+  real source of its own) this is complete; for an aggregator-only
+  root POM it may resolve nothing useful.
+- **Always fails soft.** No `mvn` on `PATH`, a broken build, a
+  timeout (90s) - any of these return an empty list, and the
+  analyzer falls back to exactly the source+JDK-only resolution
+  that existed before this feature, never a hard failure of the
+  whole run.
+
+**Verified, not assumed:** run against this project's own
+`pom.xml` (a real Maven project with real Spring/JavaParser
+dependencies already cached), the analyzer reports
+`Dependency jars: 73 (resolved via mvn dependency:build-classpath)`.
+Run against the synthetic-monolith fixture (deliberately has no
+`pom.xml`, see below), it reports
+`Dependency jars: 0 (Maven-only; none resolved or not a Maven project)`
+- confirming the fallback path is exactly as graceful as
+documented, not just in theory.

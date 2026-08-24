@@ -129,7 +129,7 @@ public class MethodCallAnalyzer {
                 typeResolver.resolveDeclaringType(call);
 
         if (declaringType.isPresent()
-                && isApplicationClass(
+                && typeResolver.isApplicationClass(
                 declaringType.get(),
                 allClasses
         )) {
@@ -149,10 +149,9 @@ public class MethodCallAnalyzer {
         if (call.getScope().isEmpty()) {
 
             boolean existsInSource =
-                    sourceClass.getMethods()
-                            .contains(
-                                    call.getNameAsString()
-                            );
+                    sourceClass.hasMethodNamed(
+                            call.getNameAsString()
+                    );
 
             if (existsInSource) {
                 return sourceClass.getName();
@@ -192,21 +191,10 @@ public class MethodCallAnalyzer {
             return null;
         }
 
-        if (isApplicationClass(variableType, allClasses)) {
+        if (typeResolver.isApplicationClass(variableType, allClasses)) {
             return variableType;
         }
 
         return null;
-    }
-
-    private boolean isApplicationClass(
-            String className,
-            List<ClassInfo> allClasses) {
-
-        return allClasses.stream()
-                .anyMatch(clazz ->
-                        clazz.getName()
-                                .equals(className)
-                );
     }
 }

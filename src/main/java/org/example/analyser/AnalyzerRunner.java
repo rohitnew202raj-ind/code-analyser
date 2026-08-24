@@ -59,6 +59,7 @@ import org.example.analyser.model.PersistenceFinding;
 
 import org.example.analyser.parser.JavaSourceParser;
 import org.example.analyser.scanner.BuildConfigReader;
+import org.example.analyser.scanner.MavenDependencyResolver;
 import org.example.analyser.scanner.ProjectScanner;
 
 import org.springframework.boot.CommandLineRunner;
@@ -71,12 +72,14 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @Component
 public class AnalyzerRunner implements CommandLineRunner {
 
     private final ProjectScanner projectScanner;
     private final BuildConfigReader buildConfigReader;
+    private final MavenDependencyResolver mavenDependencyResolver;
     private final JavaSourceParser javaSourceParser;
     private final ClassAnalyzer classAnalyzer;
     private final SpringComponentAnalyzer springComponentAnalyzer;
@@ -111,6 +114,7 @@ public class AnalyzerRunner implements CommandLineRunner {
     public AnalyzerRunner(
             ProjectScanner projectScanner,
             BuildConfigReader buildConfigReader,
+            MavenDependencyResolver mavenDependencyResolver,
             JavaSourceParser javaSourceParser,
             ClassAnalyzer classAnalyzer,
             SpringComponentAnalyzer springComponentAnalyzer,
@@ -144,6 +148,7 @@ public class AnalyzerRunner implements CommandLineRunner {
 
         this.projectScanner = projectScanner;
         this.buildConfigReader = buildConfigReader;
+        this.mavenDependencyResolver = mavenDependencyResolver;
         this.javaSourceParser = javaSourceParser;
         this.classAnalyzer = classAnalyzer;
         this.springComponentAnalyzer = springComponentAnalyzer;
@@ -218,10 +223,14 @@ public class AnalyzerRunner implements CommandLineRunner {
         List<BuildConfigReader.ModuleConfig> modules =
                 buildConfigReader.detect(targetProject);
 
+        List<Path> dependencyJars =
+                mavenDependencyResolver.resolve(targetProject);
+
         javaSourceParser.configureSymbolSolver(
                 modules.stream()
                         .map(BuildConfigReader.ModuleConfig::sourceRoot)
-                        .toList()
+                        .toList(),
+                dependencyJars
         );
 
         var javaFiles =
@@ -235,6 +244,10 @@ public class AnalyzerRunner implements CommandLineRunner {
         System.out.println("Target project : " + targetProject);
         System.out.println("Modules found  : " + modules.size());
         System.out.println("Java files     : " + javaFiles.size());
+        System.out.println("Dependency jars: " + dependencyJars.size()
+                + (dependencyJars.isEmpty()
+                        ? " (Maven-only; none resolved or not a Maven project)"
+                        : " (resolved via mvn dependency:build-classpath)"));
 
         // ======================================
         // STEP 1: PARSE + PER-CLASS ANALYSIS
@@ -651,12 +664,27 @@ public class AnalyzerRunner implements CommandLineRunner {
                     .forEach(a -> System.out.println("  " + a));
 
             System.out.println("FIELDS:");
-            classInfo.getFields()
-                    .forEach(f -> System.out.println("  " + f));
+            classInfo.getFields().forEach(field ->
+                    System.out.println(
+                            "  " + prefixWithAnnotations(field.getAnnotations())
+                                    + field.getType() + " " + field.getName()
+                    )
+            );
 
             System.out.println("METHODS:");
-            classInfo.getMethods()
-                    .forEach(m -> System.out.println("  " + m));
+            classInfo.getMethods().forEach(method ->
+                    System.out.println(
+                            "  " + prefixWithAnnotations(method.getAnnotations())
+                                    + method.getReturnType() + " " + method.getName()
+                                    + "(" + method.getParameters().stream()
+                                            .map(parameter ->
+                                                    parameter.getType() + " "
+                                                            + parameter.getName()
+                                            )
+                                            .collect(Collectors.joining(", "))
+                                    + ")"
+                    )
+            );
         }
 
         // ======================================
@@ -1106,5 +1134,12 @@ public class AnalyzerRunner implements CommandLineRunner {
                 ))
                 .map(BuildConfigReader.ModuleConfig::javaVersion)
                 .orElse(21);
+    }
+
+    private String prefixWithAnnotations(List<String> annotations) {
+
+        return annotations.isEmpty()
+                ? ""
+                : String.join(" ", annotations) + " ";
     }
 }

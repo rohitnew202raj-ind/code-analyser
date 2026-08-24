@@ -56,10 +56,10 @@ public class ClassInfo {
     private List<String> annotationSimpleNames =
             new ArrayList<>();
 
-    private List<String> fields =
+    private List<FieldInfo> fields =
             new ArrayList<>();
 
-    private List<String> methods =
+    private List<MethodInfo> methods =
             new ArrayList<>();
 
     /*
@@ -194,7 +194,7 @@ public class ClassInfo {
     // FIELDS
     // =========================================================
 
-    public List<String> getFields() {
+    public List<FieldInfo> getFields() {
         return fields;
     }
 
@@ -202,8 +202,14 @@ public class ClassInfo {
     // METHODS
     // =========================================================
 
-    public List<String> getMethods() {
+    public List<MethodInfo> getMethods() {
         return methods;
+    }
+
+    public boolean hasMethodNamed(String methodName) {
+
+        return methods.stream()
+                .anyMatch(method -> method.getName().equals(methodName));
     }
 
     // =========================================================
