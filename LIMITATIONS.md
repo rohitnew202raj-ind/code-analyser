@@ -452,6 +452,37 @@ exercising a class-level cycle, a domain-level cycle, a god class,
 two dead components, and a domain boundary in each of the three
 verdict states, with all six output files inspected directly.
 
+`domain-extraction-map.html` is a third HTML output, written
+alongside `report.html`: an interactive, clickable version of
+`domain-graph.mmd`'s data, aimed specifically at the "what should
+we extract into a service first" migration decision rather than
+at general review. It reuses the exact same `DomainDependency` and
+`DomainBoundaryInfo` lists the Mermaid/table versions already
+render from - `ReportExporter` serializes them straight to JSON
+via the same `ObjectMapper` used for `report.json`, so the page
+can never drift from what the other exports say. The node
+layout is computed once, synchronously, by a small hand-rolled
+force-directed simulation embedded in the page itself (repulsion
+between all node pairs, spring attraction along edges, a
+centering force, ~450 iterations) - not a dependency on D3 or any
+other charting library, so the file has no build step and needs
+no network access to open, matching the same "self-contained,
+opens from disk" requirement `report.html` already documents.
+Node size encodes total degree (incoming + outgoing domain
+edges), not class count, so a small-but-central domain like a
+shared `common` module visually dominates the map exactly because
+it's the bottleneck, not because it has the most code - which is
+the property `DomainBoundaryAnalyzer`'s own "TANGLED" verdict is
+already trying to flag. Clicking a domain shows
+`DomainBoundaryAnalyzer`'s own `reason` text for that verdict,
+not a second, independently-written explanation - so the page can
+only ever repeat what the analysis actually found, never invent
+a plausible-sounding but different justification. Verified
+end-to-end against both the synthetic-monolith fixture (4 domains,
+5 edges, all three verdict states present) and this project's own
+source (2 domains, 0 edges - the empty-edges path), with the
+embedded JSON parsed back out and checked in both cases.
+
 ## Persistence Deep Analysis: N+1 queries and shared entity hotspots
 
 `NPlusOneQueryAnalyzer` and `SharedEntityHotspotAnalyzer` are both

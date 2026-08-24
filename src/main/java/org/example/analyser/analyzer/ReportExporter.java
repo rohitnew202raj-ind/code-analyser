@@ -1,5 +1,6 @@
 package org.example.analyser.analyzer;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.example.analyser.model.ArchitectureFinding;
 import org.example.analyser.model.ArchitectureFindingType;
@@ -76,6 +77,22 @@ import java.util.Set;
  * the HTML report is deliberately plain, print-friendly output,
  * and "File > Print > Save as PDF" in any browser already covers
  * that need without a second rendering pipeline to maintain.
+ *
+ * {@code domain-extraction-map.html} is a second, purpose-built
+ * HTML page alongside the summary report: an interactive
+ * force-directed graph of the same domain dependency/boundary
+ * data already in {@code domain-graph.mmd} and the "Domain
+ * Boundary Analysis" table, but laid out and clickable rather
+ * than a static edge list - click a domain to see exactly what
+ * it depends on, what depends on it, and
+ * {@code DomainBoundaryAnalyzer}'s own reason for its verdict.
+ * It is a self-contained file (no external JS libraries, no
+ * network calls beyond system fonts already covered by the
+ * OS) so it opens directly from disk. The node/edge layout is
+ * computed once, synchronously, in a small hand-rolled
+ * force simulation embedded in the page - not a dependency on
+ * D3 or any other charting library - so the file has no build
+ * step and no version to keep in sync with this exporter.
  */
 @Component
 public class ReportExporter {
@@ -142,6 +159,14 @@ public class ReportExporter {
         Files.writeString(
                 outputDirectory.resolve("report.html"),
                 toHtmlReport(report)
+        );
+
+        Files.writeString(
+                outputDirectory.resolve("domain-extraction-map.html"),
+                toDomainExtractionMapHtml(
+                        report.domainDependencies(),
+                        report.domainBoundaries()
+                )
         );
 
         writeSequenceDiagrams(outputDirectory, report.flows());
@@ -471,6 +496,510 @@ public class ReportExporter {
     }
 
     // ==========================================
+    // DOMAIN EXTRACTION MAP (interactive HTML)
+    // ==========================================
+
+    private record ExtractionMapNode(
+            String id, int classes, String status, String reason) {
+    }
+
+    private record ExtractionMapEdge(String source, String target) {
+    }
+
+    private String toDomainExtractionMapHtml(
+            List<DomainDependency> domainDependencies,
+            List<DomainBoundaryInfo> domainBoundaries) {
+
+        List<ExtractionMapNode> nodes = domainBoundaries.stream()
+                .sorted(Comparator.comparing(DomainBoundaryInfo::getDomainName))
+                .map(boundary -> new ExtractionMapNode(
+                        boundary.getDomainName(),
+                        boundary.getClassCount(),
+                        extractionMapStatus(boundary.getVerdict()),
+                        boundary.getReason()
+                ))
+                .toList();
+
+        // Distinct by (source, target) only - DomainDependency
+        // carries one row per dependency *type*
+        // (SERVICE_DEPENDENCY, COMPONENT_DEPENDENCY, ...), but a
+        // migration map only needs "does A depend on B at all,"
+        // not each call's flavor.
+        List<ExtractionMapEdge> edges = domainDependencies.stream()
+                .map(dependency -> new ExtractionMapEdge(
+                        dependency.getSourceDomain(),
+                        dependency.getTargetDomain()
+                ))
+                .distinct()
+                .toList();
+
+        String nodesJson;
+        String edgesJson;
+
+        try {
+            nodesJson = objectMapper.writeValueAsString(nodes);
+            edgesJson = objectMapper.writeValueAsString(edges);
+        } catch (JsonProcessingException impossible) {
+            // Both records are plain strings/ints already produced
+            // by earlier analysis stages - this can't realistically
+            // fail. Fall back to an empty map rather than letting
+            // one exporter output take down the rest of export().
+            nodesJson = "[]";
+            edgesJson = "[]";
+        }
+
+        return DOMAIN_EXTRACTION_MAP_TEMPLATE
+                .replace("__NODES_JSON__", nodesJson)
+                .replace("__EDGES_JSON__", edgesJson);
+    }
+
+    private String extractionMapStatus(DomainBoundaryVerdict verdict) {
+
+        return switch (verdict) {
+            case EXTRACTION_CANDIDATE -> "candidate";
+            case TANGLED -> "tangled";
+            case BLOCKED_BY_CYCLE -> "blocked";
+        };
+    }
+
+    private static final String DOMAIN_EXTRACTION_MAP_TEMPLATE = """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+            <meta charset="UTF-8">
+            <title>Domain Extraction Map</title>
+            <style>
+              :root {
+                --ground: #F6F7F9;
+                --surface: #FFFFFF;
+                --surface-2: #FBFCFD;
+                --ink: #1A212B;
+                --ink-soft: #5C6675;
+                --ink-faint: #8B94A1;
+                --line: #DFE3E9;
+                --accent: #1F6F6B;
+                --status-candidate: #2E9663;
+                --status-candidate-bg: rgba(46,150,99,0.12);
+                --status-tangled: #C67A1E;
+                --status-tangled-bg: rgba(198,122,30,0.14);
+                --status-blocked: #C24450;
+                --status-blocked-bg: rgba(194,68,80,0.12);
+                --font-display: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+                --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                --radius-lg: 12px;
+                --radius-md: 8px;
+              }
+              @media (prefers-color-scheme: dark) {
+                :root {
+                  --ground: #11151B;
+                  --surface: #181E26;
+                  --surface-2: #1D242D;
+                  --ink: #E7EBF0;
+                  --ink-soft: #93A0AF;
+                  --ink-faint: #66707D;
+                  --line: #2A323D;
+                  --accent: #52C4BC;
+                  --status-candidate: #45C688;
+                  --status-candidate-bg: rgba(69,198,136,0.16);
+                  --status-tangled: #E2963E;
+                  --status-tangled-bg: rgba(226,150,62,0.16);
+                  --status-blocked: #E3626C;
+                  --status-blocked-bg: rgba(227,98,108,0.16);
+                }
+              }
+              * { box-sizing: border-box; }
+              html, body { background: var(--ground); }
+              body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--font-body); }
+              .page { max-width: 1400px; margin: 0 auto; padding: 28px 32px 56px; display: flex; flex-direction: column; gap: 24px; }
+              .topbar { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 20px; }
+              .title-block h1 { font-family: var(--font-display); font-size: 1.55rem; margin: 0 0 6px; letter-spacing: -0.01em; }
+              .subtitle { margin: 0; color: var(--ink-soft); font-size: 0.875rem; }
+              .stat-row { display: flex; gap: 12px; flex-wrap: wrap; }
+              .stat-tile { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid transparent; border-radius: var(--radius-md); padding: 10px 16px; min-width: 128px; display: flex; flex-direction: column; gap: 2px; }
+              .stat-value { font-family: var(--font-display); font-size: 1.5rem; font-variant-numeric: tabular-nums; line-height: 1; }
+              .stat-label { font-size: 0.7rem; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.04em; }
+              .stat-tile.candidate { border-left-color: var(--status-candidate); }
+              .stat-tile.tangled   { border-left-color: var(--status-tangled); }
+              .stat-tile.blocked   { border-left-color: var(--status-blocked); }
+              .stat-tile.candidate .stat-value { color: var(--status-candidate); }
+              .stat-tile.tangled .stat-value   { color: var(--status-tangled); }
+              .stat-tile.blocked .stat-value   { color: var(--status-blocked); }
+              .workspace { display: grid; grid-template-columns: 1fr 320px; gap: 24px; align-items: start; }
+              @media (max-width: 880px) { .workspace { grid-template-columns: 1fr; } .rail { position: static; } }
+              .graph-pane { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 16px; display: flex; flex-direction: column; gap: 10px; overflow-x: auto; }
+              #graph { width: 100%; height: auto; display: block; }
+              .graph-hint { margin: 0; font-size: 0.78rem; color: var(--ink-faint); }
+              .rail { display: flex; flex-direction: column; gap: 16px; position: sticky; top: 24px; }
+              .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 16px 18px; }
+              .panel h2 { margin: 0 0 10px; font-family: var(--font-display); font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-soft); }
+              .legend ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; font-size: 0.82rem; }
+              .legend li { display: flex; gap: 8px; align-items: flex-start; line-height: 1.4; }
+              .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 4px; flex: none; }
+              .dot.candidate { background: var(--status-candidate); }
+              .dot.tangled   { background: var(--status-tangled); }
+              .dot.blocked   { background: var(--status-blocked); }
+              .legend .note { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--line); font-size: 0.76rem; color: var(--ink-faint); line-height: 1.5; }
+              .detail-empty { font-size: 0.85rem; color: var(--ink-soft); line-height: 1.55; margin: 0; }
+              .detail-header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+              .detail-name { font-family: var(--font-display); font-size: 1.05rem; }
+              .badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+              .badge.candidate { background: var(--status-candidate-bg); color: var(--status-candidate); }
+              .badge.tangled   { background: var(--status-tangled-bg); color: var(--status-tangled); }
+              .badge.blocked   { background: var(--status-blocked-bg); color: var(--status-blocked); }
+              .detail-meta { font-size: 0.78rem; color: var(--ink-soft); margin: 10px 0; font-variant-numeric: tabular-nums; }
+              .detail-reason { font-size: 0.85rem; line-height: 1.55; margin: 0 0 14px; }
+              .detail-group h3 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-faint); margin: 0 0 6px; }
+              .detail-group { margin-bottom: 12px; }
+              .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+              .chip { font-family: var(--font-display); font-size: 0.72rem; padding: 4px 8px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--line); cursor: pointer; color: var(--ink); }
+              .chip:hover, .chip:focus-visible { border-color: var(--accent); color: var(--accent); }
+              .clear-btn { font-size: 0.75rem; color: var(--accent); background: none; border: none; cursor: pointer; padding: 0; text-decoration: underline; text-underline-offset: 2px; font-family: var(--font-body); }
+              .candidates ol { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+              .candidate-item { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; font-size: 0.85rem; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-md); cursor: pointer; background: var(--surface-2); }
+              .candidate-item:hover, .candidate-item:focus-visible { border-color: var(--status-candidate); }
+              .candidate-item .name { font-family: var(--font-display); }
+              .candidate-item .count { color: var(--ink-soft); font-variant-numeric: tabular-nums; font-size: 0.75rem; }
+              .empty-state { font-size: 0.85rem; color: var(--ink-soft); }
+              .edge { stroke: var(--line); stroke-width: 1.2; transition: stroke 0.15s ease, opacity 0.15s ease; }
+              .edge.dim { opacity: 0.15; }
+              .edge.active { stroke: var(--accent); stroke-width: 2; opacity: 1; }
+              .arrow { fill: var(--line); transition: fill 0.15s ease, opacity 0.15s ease; }
+              .arrow.dim { opacity: 0.15; }
+              .arrow.active { fill: var(--accent); }
+              .node { cursor: pointer; }
+              .node-circle { stroke: var(--surface); stroke-width: 2; transition: opacity 0.15s ease; }
+              .node-circle.dim { opacity: 0.28; }
+              .node.selected .node-circle { stroke: var(--accent); stroke-width: 3; }
+              .node-label { font-family: var(--font-display); font-size: 10.5px; fill: var(--ink); pointer-events: none; transition: opacity 0.15s ease; }
+              .node-label.dim { opacity: 0.32; }
+              .node:focus-visible { outline: none; }
+              .node:focus-visible .node-circle { stroke: var(--accent); stroke-width: 3; }
+              @media (prefers-reduced-motion: reduce) {
+                .edge, .arrow, .node-circle, .node-label, .chip, .candidate-item { transition: none !important; }
+              }
+            </style>
+            </head>
+            <body>
+            <div class="page">
+              <header class="topbar">
+                <div class="title-block">
+                  <h1>Domain Extraction Map</h1>
+                  <p class="subtitle" id="subtitle">Derived from the domain boundary analysis</p>
+                </div>
+                <div class="stat-row">
+                  <div class="stat-tile candidate">
+                    <span class="stat-value" id="statCandidate">0</span>
+                    <span class="stat-label">ready to extract</span>
+                  </div>
+                  <div class="stat-tile tangled">
+                    <span class="stat-value" id="statTangled">0</span>
+                    <span class="stat-label">tangled hub</span>
+                  </div>
+                  <div class="stat-tile blocked">
+                    <span class="stat-value" id="statBlocked">0</span>
+                    <span class="stat-label">locked in a cycle</span>
+                  </div>
+                </div>
+              </header>
+              <main class="workspace">
+                <section class="graph-pane">
+                  <div id="graphWrap" aria-label="Force-directed graph of domain dependencies, colored by extraction readiness. Domains are focusable buttons; activate one to see its dependencies.">
+                    <svg id="graph" viewBox="0 0 1100 780">
+                      <rect id="bg" x="0" y="0" width="1100" height="780" fill="transparent" pointer-events="all"></rect>
+                      <g id="edgeLayer"></g>
+                      <g id="nodeLayer"></g>
+                    </svg>
+                  </div>
+                  <p class="graph-hint" id="graphHint">Click a domain to trace what it depends on and what depends on it. Node size = how many other domains it touches.</p>
+                </section>
+                <aside class="rail">
+                  <div class="panel legend">
+                    <h2>Reading the map</h2>
+                    <ul>
+                      <li><span class="dot candidate"></span> Extraction candidate — few or no cross-domain calls, safe to pull out now</li>
+                      <li><span class="dot tangled"></span> Tangled hub — touches too many domains to be a clean boundary on its own</li>
+                      <li><span class="dot blocked"></span> Blocked by cycle — part of a circular dependency; needs the cycle broken first</li>
+                    </ul>
+                    <p class="note">Node size encodes how many domains it's connected to (in + out), not lines of code.</p>
+                  </div>
+                  <div class="panel detail-panel">
+                    <h2>Selected domain</h2>
+                    <div id="detailPanel"><p class="detail-empty">Select a domain in the map to see what depends on it, what it depends on, and why it is or isn't ready to extract.</p></div>
+                  </div>
+                  <div class="panel candidates">
+                    <h2>Extract first</h2>
+                    <ol id="candidateList"></ol>
+                  </div>
+                </aside>
+              </main>
+            </div>
+            <script>
+            (function () {
+              var DOMAINS = __NODES_JSON__;
+              var EDGES = __EDGES_JSON__;
+
+              var STATUS_LABEL = {candidate:'extraction candidate', tangled:'tangled hub', blocked:'blocked by cycle'};
+              var BADGE_LABEL = {candidate:'Extraction candidate', tangled:'Tangled hub', blocked:'Blocked by cycle'};
+
+              function esc(s) {
+                return String(s).replace(/[&<>"]/g, function (c) {
+                  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
+                });
+              }
+
+              var graphPane = document.querySelector('.graph-pane');
+
+              if (!DOMAINS.length) {
+                graphPane.innerHTML = '<p class="empty-state">No domains were found in this analysis.</p>';
+                renderStats();
+                return;
+              }
+
+              var W = 1100, H = 780;
+              var nodesById = {};
+              DOMAINS.forEach(function (d) { nodesById[d.id] = d; });
+
+              var degree = {};
+              DOMAINS.forEach(function (d) { degree[d.id] = 0; });
+              EDGES.forEach(function (e) { degree[e.source] = (degree[e.source] || 0) + 1; degree[e.target] = (degree[e.target] || 0) + 1; });
+              DOMAINS.forEach(function (d) { d.r = 14 + Math.sqrt(degree[d.id] || 0) * 5.5; });
+
+              // ---- force-directed layout (synchronous, no external libs) ----
+              (function layout() {
+                var cx = W / 2, cy = H / 2, R = Math.min(W, H) * 0.32;
+                DOMAINS.forEach(function (d, i) {
+                  var a = (i / DOMAINS.length) * Math.PI * 2;
+                  d.x = cx + R * Math.cos(a) + (Math.random() - 0.5) * 20;
+                  d.y = cy + R * Math.sin(a) + (Math.random() - 0.5) * 20;
+                  d.vx = 0; d.vy = 0;
+                });
+
+                var idealLen = 125, repulseK = 9500, springK = 0.022, centerK = 0.0022, damping = 0.85, maxV = 40;
+
+                for (var iter = 0; iter < 450; iter++) {
+                  for (var i = 0; i < DOMAINS.length; i++) {
+                    for (var j = i + 1; j < DOMAINS.length; j++) {
+                      var a2 = DOMAINS[i], b2 = DOMAINS[j];
+                      var dx = a2.x - b2.x, dy = a2.y - b2.y;
+                      var distSq = dx * dx + dy * dy;
+                      if (distSq < 1) distSq = 1;
+                      var dist = Math.sqrt(distSq);
+                      var scale = 1 + (a2.r + b2.r) / 90;
+                      var force = (repulseK * scale) / distSq;
+                      var fx = (dx / dist) * force, fy = (dy / dist) * force;
+                      a2.vx += fx; a2.vy += fy;
+                      b2.vx -= fx; b2.vy -= fy;
+                    }
+                  }
+                  EDGES.forEach(function (e) {
+                    var a3 = nodesById[e.source], b3 = nodesById[e.target];
+                    if (!a3 || !b3) return;
+                    var dx = b3.x - a3.x, dy = b3.y - a3.y;
+                    var dist = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
+                    var diff = dist - idealLen;
+                    var force = diff * springK;
+                    var fx = (dx / dist) * force, fy = (dy / dist) * force;
+                    a3.vx += fx; a3.vy += fy;
+                    b3.vx -= fx; b3.vy -= fy;
+                  });
+                  DOMAINS.forEach(function (d) {
+                    d.vx += (cx - d.x) * centerK;
+                    d.vy += (cy - d.y) * centerK;
+                  });
+                  DOMAINS.forEach(function (d) {
+                    d.vx *= damping; d.vy *= damping;
+                    var spd = Math.hypot(d.vx, d.vy);
+                    if (spd > maxV) { d.vx = d.vx / spd * maxV; d.vy = d.vy / spd * maxV; }
+                    d.x += d.vx; d.y += d.vy;
+                  });
+                }
+
+                var pad = 62, minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                DOMAINS.forEach(function (d) {
+                  minX = Math.min(minX, d.x); maxX = Math.max(maxX, d.x);
+                  minY = Math.min(minY, d.y); maxY = Math.max(maxY, d.y);
+                });
+                var sx = (W - 2 * pad) / (maxX - minX || 1);
+                var sy = (H - 2 * pad) / (maxY - minY || 1);
+                var s = Math.min(sx, sy, 1.15);
+                DOMAINS.forEach(function (d) {
+                  d.x = pad + (d.x - minX) * s;
+                  d.y = pad + (d.y - minY) * s;
+                });
+              })();
+
+              // ---- render ----
+              var svgNS = 'http://www.w3.org/2000/svg';
+              function svgEl(tag, attrs, cls) {
+                var e = document.createElementNS(svgNS, tag);
+                for (var k in attrs) e.setAttribute(k, attrs[k]);
+                if (cls) e.setAttribute('class', cls);
+                return e;
+              }
+
+              function arrowPoints(tipX, tipY, ux, uy, len, width) {
+                var baseX = tipX - ux * len, baseY = tipY - uy * len;
+                var perpX = -uy, perpY = ux;
+                return tipX + ',' + tipY + ' ' +
+                  (baseX + perpX * width / 2) + ',' + (baseY + perpY * width / 2) + ' ' +
+                  (baseX - perpX * width / 2) + ',' + (baseY - perpY * width / 2);
+              }
+
+              var edgeLayer = document.getElementById('edgeLayer');
+              var nodeLayer = document.getElementById('nodeLayer');
+              var edgeEls = [];
+
+              EDGES.forEach(function (e) {
+                var a = nodesById[e.source], b = nodesById[e.target];
+                if (!a || !b) return;
+                var dx = b.x - a.x, dy = b.y - a.y;
+                var dist = Math.max(Math.hypot(dx, dy), 1);
+                var ux = dx / dist, uy = dy / dist;
+                var startX = a.x + ux * a.r, startY = a.y + uy * a.r;
+                var arrowLen = 8, arrowW = 6;
+                var tipX = b.x - ux * b.r, tipY = b.y - uy * b.r;
+                var lineEndX = tipX - ux * arrowLen, lineEndY = tipY - uy * arrowLen;
+
+                var line = svgEl('line', {x1: startX, y1: startY, x2: lineEndX, y2: lineEndY}, 'edge');
+                var arrow = svgEl('polygon', {points: arrowPoints(tipX, tipY, ux, uy, arrowLen, arrowW)}, 'arrow');
+                edgeLayer.appendChild(line);
+                edgeLayer.appendChild(arrow);
+                edgeEls.push({s: e.source, t: e.target, line: line, arrow: arrow});
+              });
+
+              DOMAINS.forEach(function (d) {
+                var g = svgEl('g', {transform: 'translate(' + d.x + ',' + d.y + ')', tabindex: '0', role: 'button'}, 'node');
+                g.setAttribute('aria-label', d.id + ', ' + (STATUS_LABEL[d.status] || d.status) + ', ' + d.classes + ' classes');
+                var circle = svgEl('circle', {r: d.r}, 'node-circle');
+                circle.setAttribute('fill', 'var(--status-' + d.status + ')');
+                var label = svgEl('text', {y: d.r + 13, 'text-anchor': 'middle'}, 'node-label');
+                label.textContent = d.id;
+                g.appendChild(circle);
+                g.appendChild(label);
+                g.addEventListener('click', function () { selectNode(d.id); });
+                g.addEventListener('keydown', function (ev) {
+                  if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); selectNode(d.id); }
+                });
+                nodeLayer.appendChild(g);
+                d.el = g;
+                d.circleEl = circle;
+                d.labelEl = label;
+              });
+
+              document.getElementById('bg').addEventListener('click', function () { clearSelection(); });
+
+              var selectedId = null;
+
+              function selectNode(id) {
+                if (selectedId === id) { clearSelection(); return; }
+                selectedId = id;
+                var neighbors = {};
+                neighbors[id] = true;
+                EDGES.forEach(function (e) {
+                  if (e.source === id) neighbors[e.target] = true;
+                  if (e.target === id) neighbors[e.source] = true;
+                });
+                DOMAINS.forEach(function (d) {
+                  var on = !!neighbors[d.id];
+                  d.circleEl.classList.toggle('dim', !on);
+                  d.labelEl.classList.toggle('dim', !on);
+                  d.el.classList.toggle('selected', d.id === id);
+                });
+                edgeEls.forEach(function (ee) {
+                  var touches = ee.s === id || ee.t === id;
+                  ee.line.classList.toggle('active', touches);
+                  ee.arrow.classList.toggle('active', touches);
+                  ee.line.classList.toggle('dim', !touches);
+                  ee.arrow.classList.toggle('dim', !touches);
+                });
+                renderDetail(id);
+              }
+
+              function clearSelection() {
+                selectedId = null;
+                DOMAINS.forEach(function (d) {
+                  d.circleEl.classList.remove('dim');
+                  d.labelEl.classList.remove('dim');
+                  d.el.classList.remove('selected');
+                });
+                edgeEls.forEach(function (ee) {
+                  ee.line.classList.remove('active', 'dim');
+                  ee.arrow.classList.remove('active', 'dim');
+                });
+                renderDetail(null);
+              }
+
+              function renderDetail(id) {
+                var panel = document.getElementById('detailPanel');
+                if (!id) {
+                  panel.innerHTML = '<p class="detail-empty">Select a domain in the map to see what depends on it, what it depends on, and why it is or isn\\'t ready to extract.</p>';
+                  return;
+                }
+                var d = nodesById[id];
+                var outs = EDGES.filter(function (e) { return e.source === id; }).map(function (e) { return e.target; });
+                var ins = EDGES.filter(function (e) { return e.target === id; }).map(function (e) { return e.source; });
+
+                var html = '';
+                html += '<div class="detail-header"><span class="detail-name">' + esc(d.id) + '</span><button class="clear-btn" id="clearSel">clear</button></div>';
+                html += '<span class="badge ' + esc(d.status) + '">' + esc(BADGE_LABEL[d.status] || d.status) + '</span>';
+                html += '<p class="detail-meta">' + d.classes + ' classes &middot; ' + outs.length + ' outgoing &middot; ' + ins.length + ' incoming</p>';
+                html += '<p class="detail-reason">' + esc(d.reason || '') + '</p>';
+                if (outs.length) {
+                  html += '<div class="detail-group"><h3>Depends on</h3><div class="chip-row">' +
+                    outs.map(function (o) { return '<button class="chip" data-id="' + esc(o) + '">' + esc(o) + '</button>'; }).join('') +
+                    '</div></div>';
+                }
+                if (ins.length) {
+                  html += '<div class="detail-group"><h3>Depended on by</h3><div class="chip-row">' +
+                    ins.map(function (o) { return '<button class="chip" data-id="' + esc(o) + '">' + esc(o) + '</button>'; }).join('') +
+                    '</div></div>';
+                }
+                panel.innerHTML = html;
+                document.getElementById('clearSel').addEventListener('click', clearSelection);
+                Array.prototype.forEach.call(panel.querySelectorAll('.chip'), function (c) {
+                  c.addEventListener('click', function () { selectNode(c.getAttribute('data-id')); });
+                });
+              }
+
+              function renderCandidates() {
+                var list = document.getElementById('candidateList');
+                var candidates = DOMAINS.filter(function (d) { return d.status === 'candidate'; })
+                  .sort(function (a, b) { return a.classes - b.classes; });
+                if (!candidates.length) {
+                  list.innerHTML = '<li class="empty-state">None - every domain here needs another domain untangled first.</li>';
+                  return;
+                }
+                list.innerHTML = candidates.map(function (d) {
+                  return '<li class="candidate-item" data-id="' + esc(d.id) + '" tabindex="0" role="button">' +
+                    '<span class="name">' + esc(d.id) + '</span><span class="count">' + d.classes + ' classes</span></li>';
+                }).join('');
+                Array.prototype.forEach.call(list.querySelectorAll('.candidate-item'), function (li) {
+                  li.addEventListener('click', function () { selectNode(li.getAttribute('data-id')); });
+                  li.addEventListener('keydown', function (ev) {
+                    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); selectNode(li.getAttribute('data-id')); }
+                  });
+                });
+              }
+
+              renderCandidates();
+              renderStats();
+
+              function renderStats() {
+                var counts = {candidate: 0, tangled: 0, blocked: 0};
+                DOMAINS.forEach(function (d) { counts[d.status] = (counts[d.status] || 0) + 1; });
+                document.getElementById('statCandidate').textContent = counts.candidate;
+                document.getElementById('statTangled').textContent = counts.tangled;
+                document.getElementById('statBlocked').textContent = counts.blocked;
+                document.getElementById('subtitle').textContent =
+                  DOMAINS.length + ' domains · ' + EDGES.length + ' cross-domain calls · derived from the domain boundary analysis';
+              }
+            })();
+            </script>
+            </body>
+            </html>
+            """;
+
+    // ==========================================
     // HTML SUMMARY REPORT
     // ==========================================
 
@@ -509,6 +1038,9 @@ public class ReportExporter {
                 .append("Full dependency/domain graphs: ")
                 .append("<code>dependency-graph.dot</code>/<code>.mmd</code>, ")
                 .append("<code>domain-graph.dot</code>/<code>.mmd</code>. ")
+                .append("Interactive, clickable version of the domain graph: ")
+                .append("<a href=\"domain-extraction-map.html\">")
+                .append("domain-extraction-map.html</a>. ")
                 .append("Per-entry-point call sequences: ")
                 .append("<code>sequence-diagrams/*.mmd</code> ")
                 .append("(paste a <code>.mmd</code> file into a GitHub markdown ")

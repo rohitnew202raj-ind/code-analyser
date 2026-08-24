@@ -47,7 +47,32 @@ class ReportExporterTest {
         assertThat(outputDirectory.resolve("dependency-graph.mmd")).exists();
         assertThat(outputDirectory.resolve("domain-graph.mmd")).exists();
         assertThat(outputDirectory.resolve("report.html")).exists();
+        assertThat(outputDirectory.resolve("domain-extraction-map.html")).exists();
         assertThat(outputDirectory.resolve("sequence-diagrams")).isDirectory();
+    }
+
+    @Test
+    void domainExtractionMapEmbedsRealDomainBoundaryData(
+            @TempDir Path outputDirectory) throws Exception {
+
+        reportExporter.export(
+                outputDirectory, minimalReport(), minimalGraph()
+        );
+
+        String html = Files.readString(
+                outputDirectory.resolve("domain-extraction-map.html")
+        );
+
+        assertThat(html).contains("\"id\":\"order\"");
+        assertThat(html).contains("\"status\":\"candidate\"");
+        assertThat(html)
+                .contains("\"reason\":\"order has no cross-domain dependencies\"");
+        // No domain dependencies in the minimal fixture, so the
+        // embedded edge list must still be valid (empty) JSON
+        // rather than the raw placeholder leaking through.
+        assertThat(html).contains("var EDGES = [];");
+        assertThat(html).doesNotContain("__NODES_JSON__");
+        assertThat(html).doesNotContain("__EDGES_JSON__");
     }
 
     @Test
