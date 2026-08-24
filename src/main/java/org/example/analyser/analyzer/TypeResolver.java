@@ -6,6 +6,7 @@ import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
 import org.example.analyser.model.ClassInfo;
+import org.example.analyser.model.FieldInfo;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -287,56 +288,12 @@ public class TypeResolver {
             String variableName,
             ClassInfo sourceClass) {
 
-        for (String field :
-                sourceClass.getFields()) {
-
-            String normalized =
-                    field
-                            .replace(";", "")
-                            .trim();
-
-            if (normalized.startsWith("@")) {
-                continue;
-            }
-
-            /*
-             * Remove initializer.
-             *
-             * private OrderRepository orders =
-             *      ...
-             */
-            int equalsIndex =
-                    normalized.indexOf("=");
-
-            if (equalsIndex >= 0) {
-
-                normalized =
-                        normalized.substring(
-                                        0,
-                                        equalsIndex
-                                )
-                                .trim();
-            }
-
-            String[] parts =
-                    normalized.split("\\s+");
-
-            if (parts.length < 2) {
-                continue;
-            }
-
-            String fieldName =
-                    parts[parts.length - 1];
-
-            String fieldType =
-                    parts[parts.length - 2];
-
-            if (fieldName.equals(variableName)) {
-                return fieldType;
-            }
-        }
-
-        return null;
+        return sourceClass.getFields()
+                .stream()
+                .filter(field -> field.getName().equals(variableName))
+                .map(FieldInfo::getType)
+                .findFirst()
+                .orElse(null);
     }
 
     // =========================================================
@@ -528,5 +485,27 @@ public class TypeResolver {
         }
 
         return normalized;
+    }
+
+    // =========================================================
+    // APPLICATION CLASS CHECK
+    // =========================================================
+
+    /**
+     * Whether {@code className} is one of the target project's
+     * own classes (as opposed to a JDK/external-library type).
+     * Centralized here because {@code MethodCallAnalyzer} and
+     * {@code RuntimeDependencyAnalyzer} both used to carry their
+     * own private, verbatim-identical copy of this exact check -
+     * see LIMITATIONS.md.
+     */
+    public boolean isApplicationClass(
+            String className,
+            List<ClassInfo> classes) {
+
+        return classes.stream()
+                .anyMatch(classInfo ->
+                        classInfo.getName().equals(className)
+                );
     }
 }

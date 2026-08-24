@@ -35,6 +35,12 @@ import java.util.List;
 @Component
 public class RuntimeDependencyAnalyzer {
 
+    private final TypeResolver typeResolver;
+
+    public RuntimeDependencyAnalyzer(TypeResolver typeResolver) {
+        this.typeResolver = typeResolver;
+    }
+
     public List<DependencyInfo> analyze(
             MethodDeclaration method,
             ClassInfo sourceClass,
@@ -50,7 +56,7 @@ public class RuntimeDependencyAnalyzer {
                             creation.getType()
                                     .getNameAsString();
 
-                    if (isApplicationClass(typeName, allClasses)) {
+                    if (typeResolver.isApplicationClass(typeName, allClasses)) {
 
                         results.add(
                                 new DependencyInfo(
@@ -81,7 +87,7 @@ public class RuntimeDependencyAnalyzer {
                                             classExpr.getType()
                                                     .asString();
 
-                                    if (isApplicationClass(
+                                    if (typeResolver.isApplicationClass(
                                             typeName,
                                             allClasses
                                     )) {
@@ -100,16 +106,5 @@ public class RuntimeDependencyAnalyzer {
                 );
 
         return results;
-    }
-
-    private boolean isApplicationClass(
-            String className,
-            List<ClassInfo> allClasses) {
-
-        return allClasses.stream()
-                .anyMatch(clazz ->
-                        clazz.getName()
-                                .equals(className)
-                );
     }
 }

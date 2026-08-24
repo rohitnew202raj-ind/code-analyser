@@ -4,6 +4,8 @@ import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.EnumDeclaration;
 import com.github.javaparser.ast.body.FieldDeclaration;
+import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.body.Parameter;
 import com.github.javaparser.ast.body.RecordDeclaration;
 import com.github.javaparser.ast.body.TypeDeclaration;
 import com.github.javaparser.ast.body.VariableDeclarator;
@@ -12,34 +14,17 @@ import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import org.example.analyser.model.ClassInfo;
 import org.example.analyser.model.DependencyInfo;
 import org.example.analyser.model.DependencyType;
+import org.example.analyser.model.FieldInfo;
+import org.example.analyser.model.MethodInfo;
+import org.example.analyser.model.ParameterInfo;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 @Component
 public class ClassAnalyzer {
-
-    // ==========================================
-    // SECRET REDACTION
-    //
-    // Field text is stored verbatim for downstream
-    // string-parsing (e.g. @Table extraction). That means
-    // hardcoded secret literals in legacy/messy code would
-    // otherwise be copied straight into the report output.
-    // ==========================================
-
-    private static final Pattern SECRET_FIELD_NAME =
-            Pattern.compile(
-                    "(?i)(password|secret|api[_-]?key"
-                            + "|token|credential"
-                            + "|private[_-]?key|access[_-]?key)"
-            );
-
-    private static final Pattern STRING_LITERAL =
-            Pattern.compile("\"([^\"\\\\]|\\\\.)*\"");
 
     // ==========================================
     // LOMBOK SYNTHESIS
@@ -104,18 +89,39 @@ public class ClassAnalyzer {
 
         for (FieldDeclaration field : clazz.getFields()) {
 
-            classInfo.getFields()
-                    .add(redactIfSecret(field));
-
             String targetType =
                     field.getElementType()
                             .asString();
+
+            List<String> fieldAnnotations =
+                    field.getAnnotations()
+                            .stream()
+                            .map(AnnotationExpr::toString)
+                            .toList();
+
+            List<String> fieldAnnotationSimpleNames =
+                    field.getAnnotations()
+                            .stream()
+                            .map(AnnotationNames::simpleName)
+                            .toList();
 
             for (VariableDeclarator variable :
                     field.getVariables()) {
 
                 String fieldName =
                         variable.getNameAsString();
+
+                classInfo.getFields()
+                        .add(
+                                new FieldInfo(
+                                        fieldName,
+                                        targetType,
+                                        fieldAnnotations,
+                                        fieldAnnotationSimpleNames,
+                                        field.isStatic(),
+                                        field.isFinal()
+                                )
+                        );
 
                 // ----------------------------------
                 // ENTITY RELATIONSHIP
@@ -168,7 +174,7 @@ public class ClassAnalyzer {
         clazz.getMethods()
                 .forEach(method ->
                         classInfo.getMethods()
-                                .add(method.getNameAsString())
+                                .add(toMethodInfo(method))
                 );
 
         synthesizeLombokMethods(clazz, classInfo);
@@ -233,30 +239,44 @@ public class ClassAnalyzer {
     }
 
     // ==========================================
-    // SECRET REDACTION
+    // METHOD -> STRUCTURED METHOD INFO
     // ==========================================
 
-    private String redactIfSecret(FieldDeclaration field) {
+    private MethodInfo toMethodInfo(MethodDeclaration method) {
 
-        String text = field.toString();
-
-        boolean secretLike =
-                field.getVariables()
+        List<ParameterInfo> parameters =
+                method.getParameters()
                         .stream()
-                        .map(VariableDeclarator::getNameAsString)
-                        .anyMatch(name ->
-                                SECRET_FIELD_NAME
-                                        .matcher(name)
-                                        .find()
-                        );
+                        .map(this::toParameterInfo)
+                        .toList();
 
-        if (!secretLike) {
-            return text;
-        }
+        List<String> annotations =
+                method.getAnnotations()
+                        .stream()
+                        .map(AnnotationExpr::toString)
+                        .toList();
 
-        return STRING_LITERAL
-                .matcher(text)
-                .replaceAll("\"***REDACTED***\"");
+        List<String> annotationSimpleNames =
+                method.getAnnotations()
+                        .stream()
+                        .map(AnnotationNames::simpleName)
+                        .toList();
+
+        return new MethodInfo(
+                method.getNameAsString(),
+                method.getType().asString(),
+                parameters,
+                annotations,
+                annotationSimpleNames
+        );
+    }
+
+    private ParameterInfo toParameterInfo(Parameter parameter) {
+
+        return new ParameterInfo(
+                parameter.getNameAsString(),
+                parameter.getType().asString()
+        );
     }
 
     // ==========================================
@@ -296,21 +316,22 @@ public class ClassAnalyzer {
                             SETTER_ANNOTATIONS
                     );
 
-            boolean booleanField =
+            String fieldType =
                     field.getElementType()
-                            .asString()
-                            .equalsIgnoreCase("boolean")
-                            || field.getElementType()
-                            .asString()
-                            .equals("Boolean");
+                            .asString();
+
+            boolean booleanField =
+                    fieldType.equalsIgnoreCase("boolean")
+                            || fieldType.equals("Boolean");
 
             for (VariableDeclarator variable :
                     field.getVariables()) {
 
+                String fieldName =
+                        variable.getNameAsString();
+
                 String capitalized =
-                        capitalize(
-                                variable.getNameAsString()
-                        );
+                        capitalize(fieldName);
 
                 if (fieldGetter) {
 
@@ -318,13 +339,34 @@ public class ClassAnalyzer {
                             booleanField ? "is" : "get";
 
                     classInfo.getMethods()
-                            .add(prefix + capitalized);
+                            .add(
+                                    new MethodInfo(
+                                            prefix + capitalized,
+                                            fieldType,
+                                            List.of(),
+                                            List.of(),
+                                            List.of()
+                                    )
+                            );
                 }
 
                 if (fieldSetter) {
 
                     classInfo.getMethods()
-                            .add("set" + capitalized);
+                            .add(
+                                    new MethodInfo(
+                                            "set" + capitalized,
+                                            "void",
+                                            List.of(
+                                                    new ParameterInfo(
+                                                            fieldName,
+                                                            fieldType
+                                                    )
+                                            ),
+                                            List.of(),
+                                            List.of()
+                                    )
+                            );
                 }
             }
         }
